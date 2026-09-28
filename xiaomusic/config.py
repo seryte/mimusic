@@ -112,7 +112,7 @@ class Config:
     )  # mutagen or ffprobe
     active_cmd: str = os.getenv(
         "XIAOMUSIC_ACTIVE_CMD",
-        "play,set_play_type_rnd,playlocal,play_music_list,play_music_list_index,stop_after_minute,stop,play_next,play_prev,set_play_type_one,set_play_type_all,set_play_type_sin,set_play_type_seq,gen_music_list,add_to_favorites,del_from_favorites,cmd_del_music,online_play,singer_play,online_playlist_play",
+        "play,set_play_type_rnd,playlocal,play_music_list,play_music_list_index,stop_after_minute,stop,play_next,play_prev,set_play_type_one,set_play_type_all,set_play_type_sin,set_play_type_seq,gen_music_list,add_to_favorites,del_from_favorites,cmd_del_music,online_play,singer_play,online_playlist_play,online_hot_rank_play",
     )
     exclude_dirs: str = os.getenv("XIAOMUSIC_EXCLUDE_DIRS", "@eaDir,tmp")
     ignore_tag_dirs: str = os.getenv("XIAOMUSIC_IGNORE_TAG_DIRS", "")
@@ -150,10 +150,10 @@ class Config:
     )
     # 是否开启多结果选择功能（关闭后按 multi_result_action 配置处理）
     enable_multi_result_selection: bool = (
-        os.getenv("XIAOMUSIC_ENABLE_MULTI_RESULT_SELECTION", "true").lower() == "true"
+        os.getenv("XIAOMUSIC_ENABLE_MULTI_RESULT_SELECTION", "false").lower() == "true"
     )
     # 多结果处理方式: random=随机播放, first=从第一个开始播放
-    multi_result_action: str = os.getenv("XIAOMUSIC_MULTI_RESULT_ACTION", "random")
+    multi_result_action: str = os.getenv("XIAOMUSIC_MULTI_RESULT_ACTION", "first")
     stop_tts_msg: str = os.getenv("XIAOMUSIC_STOP_TTS_MSG", "")
     enable_config_example: bool = False
 
@@ -170,6 +170,14 @@ class Config:
     keywords_singer_play: str = os.getenv(
         "XIAOMUSIC_KEYWORDS_SINGER_PLAY", "播放歌手,搜索歌手"
     )
+    keywords_hot_rank: str = os.getenv(
+        "XIAOMUSIC_KEYWORDS_HOT_RANK", "播放热门歌曲,播放热歌榜,播放排行榜,播放榜单"
+    )
+    # 未指定榜单名时，按顺序在榜单标题里匹配这些关键词
+    hot_rank_default_names: str = os.getenv(
+        "XIAOMUSIC_HOT_RANK_DEFAULT_NAMES", "热歌,热门,飙升,流行"
+    )
+    hot_rank_limit: int = int(os.getenv("XIAOMUSIC_HOT_RANK_LIMIT", "50"))
     keywords_stop: str = os.getenv(
         "XIAOMUSIC_KEYWORDS_STOP", "关机,暂停,停止,停止播放,关闭,退出,关掉音乐"
     )
@@ -267,6 +275,30 @@ class Config:
             if k not in self.key_match_order:
                 self.key_match_order.append(k)
 
+    def append_crontab_keyword(self):
+        """把定时任务里配置的自定义口令注册为口令"""
+        self._cron_keywords = []
+        if not self.crontab_json:
+            return
+        try:
+            cron_list = json.loads(self.crontab_json)
+        except Exception:
+            return
+        if not isinstance(cron_list, list):
+            return
+        for cron in cron_list:
+            if not isinstance(cron, dict):
+                continue
+            for kw in str(cron.get("keyword", "") or "").split(","):
+                kw = kw.strip()
+                if kw and kw not in self._cron_keywords:
+                    self.key_word_dict[kw] = f"run_crontab_keyword#{kw}"
+                    self._cron_keywords.append(kw)
+        # 自定义口令优先匹配
+        self.key_match_order = self._cron_keywords + [
+            x for x in self.key_match_order if x not in self._cron_keywords
+        ]
+
     def init(self):
         self.key_match_order = default_key_match_order()
         self.key_word_dict = default_key_word_dict()
@@ -275,15 +307,21 @@ class Config:
         self.append_keyword(self.keywords_online_play, "online_play")
         self.append_keyword(self.keywords_online_playlist_play, "online_playlist_play")
         self.append_keyword(self.keywords_singer_play, "singer_play")
+        self.append_keyword(self.keywords_hot_rank, "online_hot_rank_play")  # 新增
         self.append_keyword(self.keywords_stop, "stop")
         self.append_keyword(self.keywords_playlist, "play_music_list")
         self.append_user_keyword()
+        self.append_crontab_keyword()  # 新增
         self.key_match_order = [
             x for x in self.key_match_order if x in self.key_word_dict
         ]
 
         # 转换数据
         self._active_cmd_arr = self.active_cmd.split(",") if self.active_cmd else []
+        if self._active_cmd_arr:  # 新增：空闲时也要能响应新口令/新命令
+            for cmd in ("online_hot_rank_play", *self._cron_keywords):
+                if cmd not in self._active_cmd_arr:
+                    self._active_cmd_arr.append(cmd)
         self._exclude_dirs_set = set(self.exclude_dirs.split(","))
 
     def __post_init__(self) -> None:

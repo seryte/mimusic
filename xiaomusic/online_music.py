@@ -1054,7 +1054,8 @@ class OnlineMusicService:
 
     async def online_playlist_play(self, did="", arg1="", **kwargs):
         """执行语音搜歌单并播放"""
-        await self._before_play(did)
+        if not kwargs.get("skip_before_play"):
+            await self._before_play(did)
         search_key = str(arg1).strip() if arg1 else ""
         if not search_key:
             return await self.xiaomusic.handle_fatal_error(
@@ -1125,6 +1126,114 @@ class OnlineMusicService:
             self.log.error(f"语音搜歌单失败: {e}")
             return await self.xiaomusic.handle_fatal_error(
                 did, "小Music搜索歌单过程中出了点小故障"
+            )
+
+    # ===== 热门榜单 =====
+    async def _get_plugin_toplists(self, plugin):
+        """获取插件榜单，返回扁平的榜单项列表；插件不支持或出错时返回空列表"""
+        try:
+            groups = await asyncio.to_thread(
+                self.js_plugin_manager.get_top_lists, plugin
+            )
+        except Exception as e:
+            self.log.warning(f"插件 {plugin} 获取榜单失败: {e}")
+            return []
+        items = []
+        # MusicFree 格式: [{title: 分组名, data: [榜单项...]}]
+        for group in groups or []:
+            if isinstance(group, dict) and isinstance(group.get("data"), list):
+                items.extend(x for x in group["data"] if isinstance(x, dict))
+        return items
+
+    def _pick_hot_rank(self, toplists, keyword=""):
+        def _title(x):
+            return str(x.get("title") or x.get("name") or "")
+
+        if keyword:
+            names = [keyword]
+        else:
+            names = [
+                n.strip()
+                for n in self.xiaomusic.config.hot_rank_default_names.split(",")
+                if n.strip()
+            ]
+        for n in names:
+            for item in toplists:
+                if n in _title(item):
+                    return item
+        # 没指定榜单名时取第一个榜单；指定了却没匹配上则返回 None，走兜底
+        return toplists[0] if (toplists and not keyword) else None
+
+    async def _get_toplist_songs(self, plugin, toplist_item, limit):
+        """翻页获取榜单歌曲（最多 5 页），补齐 platform 等字段"""
+        songs = []
+        page = 1
+        try:
+            while len(songs) < limit and page <= 5:
+                res = await asyncio.to_thread(
+                    self.js_plugin_manager.get_top_list_detail,
+                    plugin,
+                    toplist_item,
+                    page,
+                )
+                page_data = (res or {}).get("musicList") or []
+                if not page_data:
+                    break
+                songs.extend(x for x in page_data if isinstance(x, dict))
+                if res.get("isEnd", True):
+                    break
+                page += 1
+        except Exception as e:
+            self.log.warning(f"插件 {plugin} 获取榜单详情失败: {e}")
+        for s in songs:
+            s.setdefault("platform", plugin)
+            # _convert_song_list_to_music_items 需要 title 和 artist 都是字符串
+            s["title"] = s.get("title") or s.get("name") or "未知歌曲"
+            s["artist"] = s.get("artist") or "未知艺术家"
+        return songs[:limit]
+
+    async def online_hot_rank_play(self, did="", arg1="", **kwargs):
+        """口令：播放热门榜单/排行榜"""
+        await self._before_play(did)
+        rank_key = str(arg1).strip() if arg1 else ""
+        limit = max(int(self.xiaomusic.config.hot_rank_limit), 1)
+        try:
+            if not self.js_plugin_manager:
+                return await self.xiaomusic.handle_fatal_error(
+                    did, "小Music没有可用的音乐插件哦。"
+                )
+            # MusicFree 模式：走插件的 getTopLists / getTopListDetail
+            if not self.js_plugin_manager.is_lx_server():
+                pref = self.js_plugin_manager.get_box_play_platform_preference()
+                enabled = [
+                    p
+                    for p in self.js_plugin_manager.get_enabled_plugins()
+                    if p != "OpenAPI"
+                ]
+                plugins = enabled if pref == "all" else [pref] + [
+                    p for p in enabled if p != pref
+                ]
+                for plugin in plugins[:5]:
+                    toplists = await self._get_plugin_toplists(plugin)
+                    picked = self._pick_hot_rank(toplists, rank_key)
+                    if not picked:
+                        continue
+                    songs = await self._get_toplist_songs(plugin, picked, limit)
+                    if not songs:
+                        continue
+                    title = picked.get("title") or picked.get("name") or "榜单"
+                    self.log.info(f"选中榜单【{title}】插件:{plugin} 共{len(songs)}首")
+                    return await self.push_music_list_play(did, songs, "_online_hot_rank")
+
+            # 兜底：LX Server 或插件都没有榜单能力 → 搜索榜单类歌单
+            self.log.info(f"榜单接口不可用，兜底搜索歌单: {rank_key or '热歌榜'}")
+            return await self.online_playlist_play(
+                did, rank_key or "热歌榜", skip_before_play=True
+            )
+        except Exception as e:
+            self.log.error(f"语音播放热门榜单失败: {e}")
+            return await self.xiaomusic.handle_fatal_error(
+                did, "小Music播放榜单过程中出了点小故障"
             )
 
     async def singer_play(self, did="", arg1="", **kwargs):

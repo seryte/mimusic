@@ -100,6 +100,9 @@
   "keywords_play": "播放歌曲,放歌曲",
   "keywords_online_play": "在线播放",
   "keywords_singer_play": "播放歌手",
+  "keywords_hot_rank": "播放热门歌曲,播放热歌榜,播放排行榜,播放榜单",
+  "hot_rank_default_names": "热歌,热门,飙升,流行",
+  "hot_rank_limit": 50,
   "keywords_stop": "关机,暂停,停止,停止播放",
   "keywords_playlist": "播放列表,播放歌单",
   "user_key_word_dict": {
