@@ -15,6 +15,15 @@ if TYPE_CHECKING:
     pass
 
 
+def resolve_custom_cmd(opvalue, oparg):
+    """解析带 # 的自定义口令，返回 (方法名, 参数)"""
+    if opvalue.startswith("exec#"):
+        return "exec", opvalue.split("#", 1)[1]
+    if opvalue.startswith("run_crontab_keyword#"):
+        return "run_crontab_keyword", opvalue.split("#", 1)[1]
+    return opvalue, oparg
+
+
 class CommandHandler:
     """命令处理器
 
@@ -103,11 +112,7 @@ class CommandHandler:
         opvalue = self.check_full_match_cmd(device, query, ctrl_panel)
         if opvalue:
             self.log.info(f"完全匹配指令. query:{query} opvalue:{opvalue}")
-            # 自定义口令
-            if opvalue.startswith("exec#"):
-                code = opvalue.split("#", 1)[1]
-                return "exec", code
-            return opvalue, ""
+            return resolve_custom_cmd(opvalue, "")
 
         # 按优先级顺序进行模糊匹配
         for opkey in self.config.key_match_order:
@@ -147,11 +152,7 @@ class CommandHandler:
 
             self.log.info(f"匹配到指令. opkey:{opkey} opvalue:{opvalue} oparg:{oparg}")
 
-            # 自定义口令
-            if opvalue.startswith("exec#"):
-                code = opvalue.split("#", 1)[1]
-                return "exec", code
-            return opvalue, oparg
+            return resolve_custom_cmd(opvalue, oparg)
 
         self.log.info(f"未匹配到指令 {query} {ctrl_panel}")
         return None, None

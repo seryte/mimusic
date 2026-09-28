@@ -61,11 +61,19 @@ class Crontab:
     def __init__(self, log):
         self.log = log
         self.scheduler = AsyncIOScheduler()
+        self._capture = None  # 口令触发时用于收集 job；None 表示正常调度
 
     def start(self):
         self.scheduler.start()
 
     def add_job(self, expression, job, coalesce=True):
+        # 口令触发：只收集 job，不加入调度器
+        if self._capture is not None:
+            self._capture.append(job)
+            return
+        # 没有 cron 表达式的任务只响应口令，不做定时调度
+        if not expression:
+            return
         try:
             # 检查表达式中是否包含注释标记
             if "#" in expression and (
@@ -177,7 +185,7 @@ class Crontab:
         self.add_job(expression, job)
 
     def add_job_cron(self, xiaomusic, cron):
-        expression = cron["expression"]  # cron 计划格式
+        expression = cron.get("expression", "")  # 口令任务可为空
         name = cron["name"]  # stop, play, play_music_list, tts
         did = cron.get("did", "")
         arg1 = cron.get("arg1", "")
@@ -192,6 +200,53 @@ class Crontab:
             self.log.error(
                 f"'{self.__class__.__name__}' object has no attribute '{jobname}'"
             )
+
+    def _find_cron_by_keyword(self, crontab_json, keyword):
+        if not crontab_json:
+            return None
+        try:
+            cron_list = json.loads(crontab_json)
+        except Exception:
+            return None
+        if not isinstance(cron_list, list):
+            return None
+        for cron in cron_list:
+            if not isinstance(cron, dict):
+                continue
+            keys = [k.strip() for k in str(cron.get("keyword", "") or "").split(",")]
+            if keyword in keys:
+                return cron
+        return None
+
+    async def run_keyword(self, xiaomusic, keyword, did=""):
+        """语音口令触发定时任务的动作，返回是否找到并执行"""
+        cron = self._find_cron_by_keyword(xiaomusic.config.crontab_json, keyword)
+        if not cron:
+            return False
+        func = getattr(self, f"add_job_{cron.get('name', '')}", None)
+        if not callable(func):
+            self.log.error(f"run_keyword 不支持的任务类型: {cron.get('name')}")
+            return False
+        # 复用 add_job_xxx 构造 job，但不加入调度器（func 是同步的，中间无 await，安全）
+        jobs = []
+        self._capture = jobs
+        try:
+            func(
+                cron.get("expression", ""),
+                xiaomusic,
+                did=did or cron.get("did", ""),  # 优先用说话的那台音箱
+                arg1=cron.get("arg1", ""),
+                cron=cron,
+            )
+        finally:
+            self._capture = None
+        for job in jobs:
+            try:
+                await job()
+            except Exception as e:
+                self.log.exception(f"run_keyword {keyword} exception {e}")
+        self.log.info(f"crontab run_keyword ok. keyword:{keyword} did:{did}")
+        return True
 
     # 清空任务
     def clear_jobs(self):

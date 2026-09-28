@@ -338,6 +338,14 @@ class XiaoMusic:
         self.update_all_playlist()
         self.log.info("gen_music_list ok")
 
+    # 口令:执行定时任务的自定义口令
+    async def run_crontab_keyword(self, did="", arg1="", **kwargs):
+        keyword = str(arg1).strip()
+        ok = await self.crontab.run_keyword(self, keyword, did)
+        if not ok:
+            self.log.warning(f"run_crontab_keyword 未找到口令: {keyword}")
+            await self.do_tts(did, f"没有找到口令{keyword}对应的定时任务")
+
     # 更新网络歌单
     async def refresh_web_music_list(self, **kwargs):
         url = self.config.music_list_url
@@ -451,6 +459,11 @@ class XiaoMusic:
     async def online_playlist_play(self, did="", arg1="", **kwargs):
         """委托给 online_music_service"""
         return await self.online_music_service.online_playlist_play(did, arg1, **kwargs)
+
+    # 口令:播放热门榜单
+    async def online_hot_rank_play(self, did="", arg1="", **kwargs):
+        """委托给 online_music_service"""
+        return await self.online_music_service.online_hot_rank_play(did, arg1, **kwargs)
 
     # 口令:播放歌手：在线搜索歌手并存为列表播放
     async def singer_play(self, did="", arg1="", **kwargs):

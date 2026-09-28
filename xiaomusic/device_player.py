@@ -376,6 +376,10 @@ class XiaoMusicDevice:
                 )
                 self._pending_selection = names
                 self._pending_selection_count = len(names)
+                if action == "first" and selected_name not in self._play_list:
+                    # 与单结果分支一致：根据歌曲匹配当前播放列表
+                    self.device.cur_playlist = self.find_cur_playlist(selected_name)
+                    self.update_playlist()
                 await self._playmusic(selected_name)
                 return
 
