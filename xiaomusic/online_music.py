@@ -1210,9 +1210,11 @@ class OnlineMusicService:
                     for p in self.js_plugin_manager.get_enabled_plugins()
                     if p != "OpenAPI"
                 ]
-                plugins = enabled if pref == "all" else [pref] + [
-                    p for p in enabled if p != pref
-                ]
+                plugins = (
+                    enabled
+                    if pref == "all"
+                    else [pref] + [p for p in enabled if p != pref]
+                )
                 for plugin in plugins[:5]:
                     toplists = await self._get_plugin_toplists(plugin)
                     picked = self._pick_hot_rank(toplists, rank_key)
@@ -1223,7 +1225,9 @@ class OnlineMusicService:
                         continue
                     title = picked.get("title") or picked.get("name") or "榜单"
                     self.log.info(f"选中榜单【{title}】插件:{plugin} 共{len(songs)}首")
-                    return await self.push_music_list_play(did, songs, "_online_hot_rank")
+                    return await self.push_music_list_play(
+                        did, songs, "_online_hot_rank"
+                    )
 
             # 兜底：LX Server 或插件都没有榜单能力 → 搜索榜单类歌单
             self.log.info(f"榜单接口不可用，兜底搜索歌单: {rank_key or '热歌榜'}")
