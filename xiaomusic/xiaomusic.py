@@ -288,7 +288,9 @@ class XiaoMusic:
         if not native:
             opvalue, _ = self.command_handler.match_cmd(device, query, True)
             if opvalue:
-                self.log.info(f"run_voice_command: 匹配到 xiaomusic 口令，query={query}")
+                self.log.info(
+                    f"run_voice_command: 匹配到 xiaomusic 口令，query={query}"
+                )
                 await self.do_check_cmd(did, query, ctrl_panel=True)
                 return True
         try:
