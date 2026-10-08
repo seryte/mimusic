@@ -129,6 +129,20 @@ class Crontab:
 
         self.add_job(expression, job)
 
+    def add_job_command(self, expression, xiaomusic, did, arg1, **kwargs):
+        """添加口令任务：到点后相当于对小爱音箱说出 arg1 这句话
+
+        cron 条目配置 "native": true 时跳过 xiaomusic 口令匹配，直接交给小爱原生处理。
+        """
+        cron = kwargs.get("cron", {})
+        _native_raw = cron.get("native", False)
+        native = _native_raw is True or str(_native_raw).lower() in ("true", "1", "yes")
+
+        async def job():
+            await xiaomusic.run_voice_command(did, arg1, native=native)
+
+        self.add_job(expression, job)
+
     # 刷新播放列表任务
     def add_job_refresh_music_list(self, expression, xiaomusic, **kwargs):
         async def job():
@@ -172,7 +186,7 @@ class Crontab:
     # 重新初始化
     def add_job_reinit(self, expression, xiaomusic, did, arg1, **kwargs):
         async def job():
-            xiaomusic.reinit()
+            await xiaomusic.reinit()
 
         self.add_job(expression, job)
 
@@ -206,16 +220,14 @@ class Crontab:
         self.clear_jobs()
 
         crontab_json = xiaomusic.config.crontab_json
-        if not crontab_json:
-            return
-
-        try:
-            cron_list = json.loads(crontab_json)
-            for cron in cron_list:
-                self.add_job_cron(xiaomusic, cron)
-            self.log.info("crontab reload_config ok")
-        except Exception as e:
-            self.log.exception(f"Execption {e}")
+        if crontab_json:
+            try:
+                cron_list = json.loads(crontab_json)
+                for cron in cron_list:
+                    self.add_job_cron(xiaomusic, cron)
+                self.log.info("crontab reload_config ok")
+            except Exception as e:
+                self.log.exception(f"Execption {e}")
 
         # 添加定时清理临时文件任务
         if xiaomusic.config.enable_auto_clean_temp:

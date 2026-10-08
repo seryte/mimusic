@@ -272,6 +272,32 @@ class XiaoMusic:
         """检查并执行命令（委托给 command_handler）"""
         return await self.command_handler.do_check_cmd(did, query, ctrl_panel, **kwargs)
 
+    async def run_voice_command(self, did, query, native=False):
+        """定时任务用：把 query 当作对音箱说出的一句话来执行
+
+        native=False 时先按 xiaomusic 自己的口令匹配（下一首、播放列表、自定义口令等），
+        匹配不上才转给小爱原生；native=True 时直接交给小爱原生处理。
+        """
+        if not query or not query.strip():
+            self.log.warning("run_voice_command: 口令为空，跳过")
+            return False
+        device = self.device_manager.devices.get(did)
+        if device is None:
+            self.log.warning(f"run_voice_command: 找不到设备 {did}")
+            return False
+        if not native:
+            opvalue, _ = self.command_handler.match_cmd(device, query, True)
+            if opvalue:
+                self.log.info(f"run_voice_command: 匹配到 xiaomusic 口令，query={query}")
+                await self.do_check_cmd(did, query, ctrl_panel=True)
+                return True
+        try:
+            ok = await device.do_native_command(query)
+        except Exception as e:
+            self.log.warning(f"run_voice_command: 原生执行异常 {e}")
+            return False
+        return ok
+
     # 重置计时器
     async def reset_timer_when_answer(self, answer_length, did):
         await self.device_manager.devices[did].reset_timer_when_answer(answer_length)

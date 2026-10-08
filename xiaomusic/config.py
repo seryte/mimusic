@@ -213,6 +213,8 @@ class Config:
     )
     auto_convert: bool = False
     crontab_json: str = os.getenv("XIAOMUSIC_CRONTAB_JSON", "")  # 定时任务
+    # 执行文本指令编号覆盖：{"硬件型号": "siid-aiid"}，不填用内置 TEXT_DIRECTIVE_COMMAND 默认值
+    text_directive_commands: str = os.getenv("XIAOMUSIC_TEXT_DIRECTIVE_COMMANDS", "")
     enable_yt_dlp_cookies: bool = (
         os.getenv("XIAOMUSIC_ENABLE_YT_DLP_COOKIES", "false").lower() == "true"
     )

@@ -55,3 +55,8 @@ TTS_COMMAND = {
     "L09A": "3-1",
     "LX04": "5-1",
 }
+# "执行文本指令"动作编号：siid-aiid（不同型号可能不同，未验证型号请用配置 text_directive_commands 覆盖）
+TEXT_DIRECTIVE_COMMAND = {
+    "LX06": "5-5",
+    "L06A": "5-5",
+}
