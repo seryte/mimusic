@@ -1225,6 +1225,10 @@ class OnlineMusicService:
                         continue
                     title = picked.get("title") or picked.get("name") or "榜单"
                     self.log.info(f"选中榜单【{title}】插件:{plugin} 共{len(songs)}首")
+                    for i, s in enumerate(songs, 1):
+                        self.log.info(
+                            f"榜单歌曲 {i}/{len(songs)}: {s.get('title')} - {s.get('artist')}"
+                        )
                     return await self.push_music_list_play(
                         did, songs, "_online_hot_rank"
                     )

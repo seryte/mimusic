@@ -25,6 +25,7 @@ from xiaomusic.const import (
     PLAY_TYPE_RND,
     PLAY_TYPE_SEQ,
     PLAY_TYPE_SIN,
+    TEXT_DIRECTIVE_COMMAND,
     TTS_COMMAND,
 )
 from xiaomusic.events import DEVICE_CONFIG_CHANGED
@@ -103,6 +104,33 @@ class XiaoMusicDevice:
     def hardware(self):
         """获取设备硬件型号"""
         return self.device.hardware
+
+    def _get_text_directive_cmd(self):
+        """获取当前设备型号的"执行文本指令"编号，配置项可覆盖内置表"""
+        cmd_map = dict(TEXT_DIRECTIVE_COMMAND)
+        extra = self.config.text_directive_commands
+        if extra:
+            try:
+                cmd_map.update(json.loads(extra))
+            except Exception as e:
+                self.log.warning(f"text_directive_commands 配置不是合法 JSON: {e}")
+        return cmd_map.get(self.hardware)
+
+    async def do_native_command(self, text):
+        """把一句话当作用户亲口说出，直接交给小爱原生执行"""
+        cmd = self._get_text_directive_cmd()
+        if not cmd:
+            self.log.warning(f"当前型号 {self.hardware} 没有配置执行文本指令编号")
+            return False
+        try:
+            ret = await miio_command(
+                self.auth_manager.miio_service, self.did, f"{cmd} {text} 0"
+            )
+            self.log.info(f"do_native_command ok: {text} ret: {ret}")
+            return True
+        except Exception as e:
+            self.log.warning(f"do_native_command failed: {e}")
+            return False
 
     def get_cur_music(self):
         """获取当前播放的音乐名称"""

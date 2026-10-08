@@ -213,6 +213,8 @@ class Config:
     )
     auto_convert: bool = False
     crontab_json: str = os.getenv("XIAOMUSIC_CRONTAB_JSON", "")  # 定时任务
+    # 执行文本指令编号覆盖：{"硬件型号": "siid-aiid"}，不填用内置 TEXT_DIRECTIVE_COMMAND 默认值
+    text_directive_commands: str = os.getenv("XIAOMUSIC_TEXT_DIRECTIVE_COMMANDS", "")
     enable_yt_dlp_cookies: bool = (
         os.getenv("XIAOMUSIC_ENABLE_YT_DLP_COOKIES", "false").lower() == "true"
     )
@@ -275,30 +277,6 @@ class Config:
             if k not in self.key_match_order:
                 self.key_match_order.append(k)
 
-    def append_crontab_keyword(self):
-        """把定时任务里配置的自定义口令注册为口令"""
-        self._cron_keywords = []
-        if not self.crontab_json:
-            return
-        try:
-            cron_list = json.loads(self.crontab_json)
-        except Exception:
-            return
-        if not isinstance(cron_list, list):
-            return
-        for cron in cron_list:
-            if not isinstance(cron, dict):
-                continue
-            for kw in str(cron.get("keyword", "") or "").split(","):
-                kw = kw.strip()
-                if kw and kw not in self._cron_keywords:
-                    self.key_word_dict[kw] = f"run_crontab_keyword#{kw}"
-                    self._cron_keywords.append(kw)
-        # 自定义口令优先匹配
-        self.key_match_order = self._cron_keywords + [
-            x for x in self.key_match_order if x not in self._cron_keywords
-        ]
-
     def init(self):
         self.key_match_order = default_key_match_order()
         self.key_word_dict = default_key_word_dict()
@@ -311,15 +289,14 @@ class Config:
         self.append_keyword(self.keywords_stop, "stop")
         self.append_keyword(self.keywords_playlist, "play_music_list")
         self.append_user_keyword()
-        self.append_crontab_keyword()  # 新增
         self.key_match_order = [
             x for x in self.key_match_order if x in self.key_word_dict
         ]
 
         # 转换数据
         self._active_cmd_arr = self.active_cmd.split(",") if self.active_cmd else []
-        if self._active_cmd_arr:  # 新增：空闲时也要能响应新口令/新命令
-            for cmd in ("online_hot_rank_play", *self._cron_keywords):
+        if self._active_cmd_arr:  # 新增：空闲时也要能响应新口令
+            for cmd in ("online_hot_rank_play",):
                 if cmd not in self._active_cmd_arr:
                     self._active_cmd_arr.append(cmd)
         self._exclude_dirs_set = set(self.exclude_dirs.split(","))
