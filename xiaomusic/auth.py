@@ -345,7 +345,9 @@ class AuthManager:
                     for key in ("userId", "passToken"):
                         if key not in resp and token.get(key) is not None:
                             resp[key] = token[key]
-                            log.info(f"[PATCH-login] 登录响应缺少 {key}，已用现有 token 补齐")
+                            log.info(
+                                f"[PATCH-login] 登录响应缺少 {key}，已用现有 token 补齐"
+                            )
                     return resp
 
                 log.warning(
@@ -410,9 +412,13 @@ class AuthManager:
                 src = main_account.token or {}
                 if src.get("passToken"):
                     account.token = {
-                        k: src[k] for k in ("deviceId", "userId", "passToken") if k in src
+                        k: src[k]
+                        for k in ("deviceId", "userId", "passToken")
+                        if k in src
                     }
-            self._patch_service_login(account, password_fallback=bool(self.config.password))
+            self._patch_service_login(
+                account, password_fallback=bool(self.config.password)
+            )
             self.miio_account = account
             self._miio_cred = cred
             self.miio_service = MiIOService(account)
