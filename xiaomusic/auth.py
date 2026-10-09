@@ -167,6 +167,7 @@ class AuthManager:
                 str(self.mi_token_home),
             )
 
+            self._patch_service_login(mi_account)
             self.set_token(mi_account)
             token_info = mi_account.token
             self.log.info(
@@ -255,6 +256,7 @@ class AuthManager:
                 self.config.password,
                 str(self.mi_token_home),
             )
+            self._patch_service_login(new_account)
             self.set_token(new_account)
 
             new_token = new_account.token
@@ -290,11 +292,66 @@ class AuthManager:
             self.log.warning(f"[AUTH-FRESH] 过程异常: {e}")
             return False
 
+    def _patch_service_login(self, mi_account):
+        """兼容登录响应里缺少 userId/passToken 的情况
+
+        miservice 的 login() 在服务端接受登录(code=0)后，会无条件读取
+        resp["userId"]、resp["passToken"]。用已有 passToken 免密登录某个新服务
+        (如 MIoT 的 xiaomiio)时，响应里可能不带这两项，于是 KeyError，
+        login() 的异常处理又会把 token 置空并把 .mi.token 写成 null，
+        导致"Login failed"并连带毁掉 micoapi 的登录态。
+        这里在 _serviceLogin 返回后，用当前 token 里已有的值补齐缺失的两项。
+        """
+        original = getattr(mi_account, "_serviceLogin", None)
+        if not callable(original):
+            self.log.warning("[PATCH-login] MiAccount 没有 _serviceLogin，跳过登录响应补丁")
+            return
+        log = self.log
+
+        async def patched_service_login(*args, **kwargs):
+            resp = await original(*args, **kwargs)
+            try:
+                if isinstance(resp, dict) and resp.get("code") == 0:
+                    token = mi_account.token or {}
+                    for key in ("userId", "passToken"):
+                        if key not in resp and token.get(key) is not None:
+                            resp[key] = token[key]
+                            log.info(f"[PATCH-login] 登录响应缺少 {key}，已用现有 token 补齐")
+            except Exception as e:
+                log.warning(f"[PATCH-login] 补齐登录响应失败: {e}")
+            return resp
+
+        mi_account._serviceLogin = patched_service_login
+
+    def _restore_session_state(self, mi_account, saved_token):
+        """请求失败且恢复不成功后，还原被破坏的 token、.mi.token 和 cookie
+
+        saved_token 必须是发起请求【之前】的快照：miservice 的 login() 失败时
+        会把 mi_account.token 置 None 并写空 .mi.token，等请求抛出来再备份就晚了。
+        mi_account.session.cookie_jar 与 self.cookie_jar 是同一个对象，
+        conversation 轮询等模块也在用它；不还原的话，一次 MIoT 请求失败
+        就会让这些模块全部 400，直到下一次 init_all_data。
+        """
+        try:
+            if saved_token is not None:
+                mi_account.token = saved_token
+                # miservice 登录失败时会把 .mi.token 写成 null，get_cookie 依赖它，一并还原
+                with open(self.mi_token_home, "w", encoding="utf-8") as f:
+                    json.dump(saved_token, f, indent=2)
+            cookie_jar = self.get_cookie()
+            if cookie_jar:
+                mi_account.session.cookie_jar.update_cookies(cookie_jar)
+            self.log.info("[PATCH-mi_request] 恢复失败，已还原 token 和 cookie")
+        except Exception as e:
+            self.log.warning(f"[PATCH-mi_request] 还原 token/cookie 失败: {e}")
+
     def _patch_account(self, mi_account):
         original_mi_request = mi_account.mi_request
         auth_manager = self
 
         async def patched_mi_request(sid, url, data, headers, relogin=True):
+            # 发起请求前先快照 token（失败的登录会把它置空）
+            saved_token = dict(mi_account.token) if mi_account.token else None
             try:
                 return await original_mi_request(sid, url, data, headers, relogin)
             except Exception as exc:
@@ -309,7 +366,14 @@ class AuthManager:
                 mi_account.session.cookie_jar.clear()
                 auth_manager.log.info("[PATCH-mi_request] 已清理 session cookie jar")
 
-                auth_manager.set_token(mi_account)
+                try:
+                    auth_manager.set_token(mi_account)
+                except Exception as e0:
+                    # 例如 cookie 配置里缺 passToken/userId 会抛 KeyError；
+                    # 不能让它盖掉原始异常，也不能跳过下面的还原
+                    auth_manager.log.warning(
+                        f"[PATCH-mi_request] set_token 失败: {type(e0).__name__}: {e0}"
+                    )
                 if mi_account.token and "passToken" in mi_account.token:
                     try:
                         login_ok = await mi_account.login(sid)
@@ -332,6 +396,7 @@ class AuthManager:
                     auth_manager.log.warning(
                         "[PATCH-mi_request] auth.json 中无有效 passToken，无法恢复"
                     )
+                auth_manager._restore_session_state(mi_account, saved_token)
                 raise
 
         mi_account.mi_request = patched_mi_request
