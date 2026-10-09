@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import time
+from urllib.parse import urlsplit
 
 from aiohttp import ClientSession
 from miservice import MiAccount, MiIOService, MiNAService
@@ -42,6 +43,10 @@ class AuthManager:
 
         self.mina_service = None
         self.miio_service = None
+        # MIoT(xiaomiio) 专用的独立账号/会话，与 mina(micoapi) 完全隔离
+        self.miio_session = None
+        self.miio_account = None
+        self._miio_cred = None
         self.login_acount = None
         self.login_password = None
         self.cookie_jar = None
@@ -207,7 +212,7 @@ class AuthManager:
 
             self._consecutive_failures = 0
             self.mina_service = MiNAService(mi_account)
-            self.miio_service = MiIOService(mi_account)
+            self._setup_miio_service(mi_account)
             self._patch_account(mi_account)
             self.login_acount = self.config.account
             self.login_password = self.config.password
@@ -275,7 +280,7 @@ class AuthManager:
                 await old_session.close()
                 self.mi_session = new_session
                 self.mina_service = MiNAService(new_account)
-                self.miio_service = MiIOService(new_account)
+                self._setup_miio_service(new_account)
                 self._patch_account(new_account)
                 self.login_acount = self.config.account
                 self.login_password = self.config.password
@@ -292,40 +297,129 @@ class AuthManager:
             self.log.warning(f"[AUTH-FRESH] 过程异常: {e}")
             return False
 
-    def _patch_service_login(self, mi_account):
-        """兼容登录响应里缺少 userId/passToken 的情况
+    @staticmethod
+    def _describe_login_resp(resp):
+        """描述登录响应，只含非敏感字段，不输出 token/ssecurity/nonce 等的值"""
+        if not isinstance(resp, dict):
+            return f"type={type(resp).__name__}"
+        info = {
+            k: resp[k]
+            for k in ("code", "desc", "description", "result", "securityStatus", "pwd")
+            if k in resp
+        }
+        location = resp.get("location")
+        if location:
+            u = urlsplit(str(location))
+            info["location"] = f"{u.scheme}://{u.netloc}{u.path}"  # 去掉 query
+        return f"keys={sorted(resp.keys())} {info}"
 
-        miservice 的 login() 在服务端接受登录(code=0)后，会无条件读取
-        resp["userId"]、resp["passToken"]。用已有 passToken 免密登录某个新服务
-        (如 MIoT 的 xiaomiio)时，响应里可能不带这两项，于是 KeyError，
-        login() 的异常处理又会把 token 置空并把 .mi.token 写成 null，
-        导致"Login failed"并连带毁掉 micoapi 的登录态。
-        这里在 _serviceLogin 返回后，用当前 token 里已有的值补齐缺失的两项。
+    def _patch_service_login(self, mi_account, password_fallback=False):
+        """加固 miservice 的登录第一步，并在异常响应时输出诊断
+
+        miservice 的 login() 先用已有 passToken 免密请求(serviceLogin?sid=...)，
+        code 为 0 就直接读取 location/nonce/ssecurity/userId/passToken。
+        实测小米对 xiaomiio 的免密请求会返回 code=0 但缺 nonce 等字段的非标准数据，
+        login() 因此 KeyError，并把 token 置空、.mi.token 写成 null。
+
+        这里在 _serviceLogin 返回后：
+        1. 只缺 userId/passToken 时，用现有 token 补齐；
+        2. 缺 location/nonce/ssecurity 说明不是完整的成功响应：记录诊断；
+        password_fallback=True 时丢弃失效的 passToken 重试，让 login() 走账号密码登录。
         """
         original = getattr(mi_account, "_serviceLogin", None)
         if not callable(original):
-            self.log.warning(
-                "[PATCH-login] MiAccount 没有 _serviceLogin，跳过登录响应补丁"
-            )
+            self.log.warning("[PATCH-login] MiAccount 没有 _serviceLogin，跳过登录补丁")
             return
         log = self.log
+        required = ("location", "nonce", "ssecurity")
 
-        async def patched_service_login(*args, **kwargs):
-            resp = await original(*args, **kwargs)
+        async def patched_service_login(uri, data=None):
+            resp = await original(uri, data)
             try:
-                if isinstance(resp, dict) and resp.get("code") == 0:
+                if not (isinstance(resp, dict) and resp.get("code") == 0):
+                    return resp
+                name = str(uri).split("?")[0]
+                missing = [k for k in required if not resp.get(k)]
+                if not missing:
                     token = mi_account.token or {}
                     for key in ("userId", "passToken"):
                         if key not in resp and token.get(key) is not None:
                             resp[key] = token[key]
-                            log.info(
-                                f"[PATCH-login] 登录响应缺少 {key}，已用现有 token 补齐"
-                            )
+                            log.info(f"[PATCH-login] 登录响应缺少 {key}，已用现有 token 补齐")
+                    return resp
+
+                log.warning(
+                    f"[PATCH-login] {name} 返回 code=0 但缺少 {missing}，"
+                    f"不是完整的登录成功响应: {self._describe_login_resp(resp)}"
+                )
+                if resp.get("notificationUrl"):
+                    log.warning(
+                        "[PATCH-login] 小米要求二次验证，请在浏览器打开此链接完成验证后重试: "
+                        f"{resp['notificationUrl']}"
+                    )
+                token = mi_account.token or {}
+                if (
+                    password_fallback
+                    and str(uri).startswith("serviceLogin?")
+                    and token.get("passToken")
+                ):
+                    log.warning("[PATCH-login] 丢弃免密凭证，改用账号密码登录")
+                    token.pop("passToken", None)
+                    token.pop("userId", None)
+                    resp2 = await original(uri, data)
+                    log.info(
+                        f"[PATCH-login] 账号密码方式第一步响应: "
+                        f"{self._describe_login_resp(resp2)}"
+                    )
+                    return resp2
             except Exception as e:
-                log.warning(f"[PATCH-login] 补齐登录响应失败: {e}")
+                log.warning(f"[PATCH-login] 登录补丁处理异常: {type(e).__name__}: {e}")
             return resp
 
         mi_account._serviceLogin = patched_service_login
+
+    def _setup_miio_service(self, main_account):
+        """创建 MIoT(xiaomiio) 专用的独立账号和会话
+
+        原来 miio_service 与 mina_service 共用同一个 MiAccount（共用 token、
+        .mi.token 和 cookie jar）。MIoT 登录一旦失败，miservice 会把共享 token
+        置空并把 .mi.token 写成 null，连带毁掉 micoapi 登录态、拖垮对话轮询。
+        独立账号后，MIoT 的任何登录失败都碰不到主账号。
+        """
+        try:
+            cred = (self.config.account, self.config.password)
+            if self.miio_account is not None and self._miio_cred == cred:
+                self.miio_service = MiIOService(self.miio_account)
+                return
+            if self.miio_session is None or self.miio_session.closed:
+                self.miio_session = ClientSession()
+            else:
+                self.miio_session.cookie_jar.clear()
+            # 每次重建都从干净状态开始，避免换账号后误用旧账号的 serviceToken
+            token_path = os.path.join(self.config.conf_path, ".mi.miio.token")
+            if os.path.exists(token_path):
+                os.remove(token_path)
+            account = MiAccount(
+                self.miio_session,
+                self.config.account,
+                self.config.password,
+                token_path,
+            )
+            if not self.config.password:
+                # 没有密码（扫码/cookie 登录）只能复用主账号的 passToken
+                src = main_account.token or {}
+                if src.get("passToken"):
+                    account.token = {
+                        k: src[k] for k in ("deviceId", "userId", "passToken") if k in src
+                    }
+            self._patch_service_login(account, password_fallback=bool(self.config.password))
+            self.miio_account = account
+            self._miio_cred = cred
+            self.miio_service = MiIOService(account)
+            self.log.info("[AUTH] 已创建独立的 MIoT 账号（与 mina 隔离）")
+        except Exception as e:
+            self.miio_service = None
+            self.log.warning(f"[AUTH] 创建 MIoT 独立账号失败: {type(e).__name__}: {e}")
 
     def _restore_session_state(self, mi_account, saved_token):
         """请求失败且恢复不成功后，还原被破坏的 token、.mi.token 和 cookie
