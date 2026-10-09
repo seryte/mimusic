@@ -304,7 +304,9 @@ class AuthManager:
         """
         original = getattr(mi_account, "_serviceLogin", None)
         if not callable(original):
-            self.log.warning("[PATCH-login] MiAccount 没有 _serviceLogin，跳过登录响应补丁")
+            self.log.warning(
+                "[PATCH-login] MiAccount 没有 _serviceLogin，跳过登录响应补丁"
+            )
             return
         log = self.log
 
@@ -316,7 +318,9 @@ class AuthManager:
                     for key in ("userId", "passToken"):
                         if key not in resp and token.get(key) is not None:
                             resp[key] = token[key]
-                            log.info(f"[PATCH-login] 登录响应缺少 {key}，已用现有 token 补齐")
+                            log.info(
+                                f"[PATCH-login] 登录响应缺少 {key}，已用现有 token 补齐"
+                            )
             except Exception as e:
                 log.warning(f"[PATCH-login] 补齐登录响应失败: {e}")
             return resp
