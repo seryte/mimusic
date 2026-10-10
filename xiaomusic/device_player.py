@@ -144,12 +144,16 @@ class XiaoMusicDevice:
         try:
             siid, aiid = (int(x) for x in cmd.split("-"))
             ret = await self.auth_manager.mijia_action(self.did, siid, aiid, [text, 0])
-            self.log.info(f"do_native_command(mijia) ok. cmd:{cmd} text:{text} ret:{ret}")
+            self.log.info(
+                f"do_native_command(mijia) ok. cmd:{cmd} text:{text} ret:{ret}"
+            )
             return True
         except RuntimeError as e:
             self.log.info(f"do_native_command(mijia) 不可用: {e}")
         except Exception as e:
-            self.log.warning(f"do_native_command(mijia) failed. text:{text} {type(e).__name__}: {e}")
+            self.log.warning(
+                f"do_native_command(mijia) failed. text:{text} {type(e).__name__}: {e}"
+            )
         return False
 
     async def _native_via_miio(self, cmd, text):
@@ -164,7 +168,9 @@ class XiaoMusicDevice:
                 self.did,
                 f"{cmd} {text} 0",  # 最后一个参数 0 表示非静默执行
             )
-            self.log.info(f"do_native_command(miio) ok. cmd:{cmd} text:{text} ret:{ret}")
+            self.log.info(
+                f"do_native_command(miio) ok. cmd:{cmd} text:{text} ret:{ret}"
+            )
             return True
         except Exception as e:
             self.log.warning(f"do_native_command(miio) failed. text:{text} {e}")
