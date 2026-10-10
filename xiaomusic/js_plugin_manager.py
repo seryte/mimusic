@@ -2544,6 +2544,53 @@ class JSPluginManager:
 
         return response["result"]
 
+    def get_recommend_sheet_tags(self, plugin_name: str):
+        """获取推荐歌单的标签（插件未实现该接口时返回 None）"""
+        if plugin_name not in self.plugins:
+            raise ValueError(f"Plugin {plugin_name} not found or not loaded")
+
+        self.log.debug(
+            f"JS Plugin Manager getting recommend sheet tags in plugin {plugin_name}"
+        )
+        response = self._send_message(
+            {"action": "getRecommendSheetTags", "pluginName": plugin_name}
+        )
+
+        if not response["success"]:
+            self.log.error(
+                f"JS Plugin Manager getRecommendSheetTags failed in plugin {plugin_name}: {response['error']}"
+            )
+            raise Exception(f"getRecommendSheetTags failed: {response['error']}")
+
+        return response["result"]
+
+    def get_recommend_sheets_by_tag(
+        self, plugin_name: str, tag: dict[str, Any], page: int = 1
+    ):
+        """按标签获取推荐歌单（插件未实现该接口时返回 None）"""
+        if plugin_name not in self.plugins:
+            raise ValueError(f"Plugin {plugin_name} not found or not loaded")
+
+        self.log.debug(
+            f"JS Plugin Manager getting recommend sheets in plugin {plugin_name} for tag: {tag.get('title', 'unknown')}"
+        )
+        response = self._send_message(
+            {
+                "action": "getRecommendSheetsByTag",
+                "pluginName": plugin_name,
+                "tag": tag,
+                "page": page,
+            }
+        )
+
+        if not response["success"]:
+            self.log.error(
+                f"JS Plugin Manager getRecommendSheetsByTag failed in plugin {plugin_name}: {response['error']}"
+            )
+            raise Exception(f"getRecommendSheetsByTag failed: {response['error']}")
+
+        return response["result"]
+
     # 启用插件
     def enable_plugin(self, plugin_name: str) -> bool:
         if plugin_name in self.plugins:

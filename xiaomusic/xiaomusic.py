@@ -485,6 +485,11 @@ class XiaoMusic:
         """委托给 online_music_service"""
         return await self.online_music_service.online_hot_rank_play(did, arg1, **kwargs)
 
+    # 口令:探索式播放歌单（随机、不重样）
+    async def online_discover_play(self, did="", arg1="", **kwargs):
+        """委托给 online_music_service"""
+        return await self.online_music_service.online_discover_play(did, arg1, **kwargs)
+
     # 口令:播放歌手：在线搜索歌手并存为列表播放
     async def singer_play(self, did="", arg1="", **kwargs):
         """委托给 online_music_service"""

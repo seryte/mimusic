@@ -95,6 +95,12 @@ class PluginRunner {
                 case 'getTopListDetail':
                     result = await this.getTopListDetail(message.pluginName, message.topListItem, message.page);
                     break;
+                case 'getRecommendSheetTags':
+                    result = await this.getRecommendSheetTags(message.pluginName);
+                    break;
+                case 'getRecommendSheetsByTag':
+                    result = await this.getRecommendSheetsByTag(message.pluginName, message.tag, message.page);
+                    break;
                 case 'unload':
                     console.log(`[JS_PLUGIN_RUNNER] Unloading plugin: ${message.name}`);
                     result = this.unloadPlugin(message.name);
@@ -613,6 +619,60 @@ class PluginRunner {
         } catch (error) {
             console.error(`[JS_PLUGIN_RUNNER] getTopListDetail error in plugin ${pluginName}:`, error.message);
             throw new Error(`getTopListDetail failed in plugin ${pluginName}: ${error.message}`);
+        }
+    }
+
+    async getRecommendSheetTags(pluginName) {
+        const plugin = this.plugins.get(pluginName);
+        if (!plugin) {
+            throw new Error(`Plugin ${pluginName} not found`);
+        }
+
+        // 检查插件是否有 getRecommendSheetTags 方法 (按照官方文档标准)
+        if (!plugin.getRecommendSheetTags || typeof plugin.getRecommendSheetTags !== 'function') {
+            return null;
+        }
+
+        try {
+            const result = await plugin.getRecommendSheetTags();
+            if (result === null || result === undefined) {
+                return null;
+            }
+            if (typeof result !== 'object') {
+                console.error(`[JS_PLUGIN_RUNNER] Invalid recommend sheet tags result from plugin ${pluginName}:`, typeof result);
+                throw new Error(`Plugin ${pluginName} returned invalid recommend sheet tags result`);
+            }
+            return result;
+        } catch (error) {
+            console.error(`[JS_PLUGIN_RUNNER] getRecommendSheetTags error in plugin ${pluginName}:`, error.message);
+            throw new Error(`getRecommendSheetTags failed in plugin ${pluginName}: ${error.message}`);
+        }
+    }
+
+    async getRecommendSheetsByTag(pluginName, tag, page = 1) {
+        const plugin = this.plugins.get(pluginName);
+        if (!plugin) {
+            throw new Error(`Plugin ${pluginName} not found`);
+        }
+
+        // 检查插件是否有 getRecommendSheetsByTag 方法 (按照官方文档标准)
+        if (!plugin.getRecommendSheetsByTag || typeof plugin.getRecommendSheetsByTag !== 'function') {
+            return null;
+        }
+
+        try {
+            const result = await plugin.getRecommendSheetsByTag(tag, page);
+            if (result === null || result === undefined) {
+                return null;
+            }
+            if (typeof result !== 'object') {
+                console.error(`[JS_PLUGIN_RUNNER] Invalid recommend sheets result from plugin ${pluginName}:`, typeof result);
+                throw new Error(`Plugin ${pluginName} returned invalid recommend sheets result`);
+            }
+            return result;
+        } catch (error) {
+            console.error(`[JS_PLUGIN_RUNNER] getRecommendSheetsByTag error in plugin ${pluginName}:`, error.message);
+            throw new Error(`getRecommendSheetsByTag failed in plugin ${pluginName}: ${error.message}`);
         }
     }
 

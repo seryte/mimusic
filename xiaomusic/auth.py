@@ -480,7 +480,9 @@ class AuthManager:
             self.miio_account = account
             self._miio_cred = cred
             self.miio_service = MiIOService(account)
-            self.log.info("[AUTH] 已创建独立的 MIoT 账号（与 mina 隔离）")
+            self.log.info(
+                f"[AUTH] 已创建独立的 MIoT 账号（与 mina 隔离），deviceId 尾号 {device_id[-4:]}"
+            )
         except Exception as e:
             self.miio_service = None
             self.log.warning(f"[AUTH] 创建 MIoT 独立账号失败: {type(e).__name__}: {e}")

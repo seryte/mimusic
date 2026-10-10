@@ -112,7 +112,7 @@ class Config:
     )  # mutagen or ffprobe
     active_cmd: str = os.getenv(
         "XIAOMUSIC_ACTIVE_CMD",
-        "play,set_play_type_rnd,playlocal,play_music_list,play_music_list_index,stop_after_minute,stop,play_next,play_prev,set_play_type_one,set_play_type_all,set_play_type_sin,set_play_type_seq,gen_music_list,add_to_favorites,del_from_favorites,cmd_del_music,online_play,singer_play,online_playlist_play,online_hot_rank_play",
+        "play,set_play_type_rnd,playlocal,play_music_list,play_music_list_index,stop_after_minute,stop,play_next,play_prev,set_play_type_one,set_play_type_all,set_play_type_sin,set_play_type_seq,gen_music_list,add_to_favorites,del_from_favorites,cmd_del_music,online_play,singer_play,online_playlist_play,online_hot_rank_play,online_discover_play",
     )
     exclude_dirs: str = os.getenv("XIAOMUSIC_EXCLUDE_DIRS", "@eaDir,tmp")
     ignore_tag_dirs: str = os.getenv("XIAOMUSIC_IGNORE_TAG_DIRS", "")
@@ -178,6 +178,20 @@ class Config:
         "XIAOMUSIC_HOT_RANK_DEFAULT_NAMES", "热歌,热门,飙升,流行"
     )
     hot_rank_limit: int = int(os.getenv("XIAOMUSIC_HOT_RANK_LIMIT", "50"))
+    # 探索式播放（随机挑选没听过的歌单，不重样）的口令，口令后面的文字作为想听的类型，
+    # 如"探索歌单民谣"
+    keywords_discover: str = os.getenv(
+        "XIAOMUSIC_KEYWORDS_DISCOVER", "探索歌单,探索音乐,随机歌单,来点好听的"
+    )
+    # 每次探索最多播放多少首
+    discover_song_limit: int = int(os.getenv("XIAOMUSIC_DISCOVER_SONG_LIMIT", "30"))
+    # 推荐过的歌单/歌曲多少天内不再重复推荐（0 表示永不重复）
+    discover_history_days: int = int(os.getenv("XIAOMUSIC_DISCOVER_HISTORY_DAYS", "90"))
+    # 插件没有推荐歌单/榜单接口时，随机从这些关键词里搜歌单
+    discover_search_keywords: str = os.getenv(
+        "XIAOMUSIC_DISCOVER_SEARCH_KEYWORDS",
+        "华语经典,民谣,轻音乐,治愈,粤语经典,经典老歌,欧美流行,日系,纯音乐,摇滚,爵士,影视原声,睡前,学习,驾车",
+    )
     keywords_stop: str = os.getenv(
         "XIAOMUSIC_KEYWORDS_STOP", "关机,暂停,停止,停止播放,关闭,退出,关掉音乐"
     )
@@ -291,6 +305,7 @@ class Config:
         self.append_keyword(self.keywords_online_playlist_play, "online_playlist_play")
         self.append_keyword(self.keywords_singer_play, "singer_play")
         self.append_keyword(self.keywords_hot_rank, "online_hot_rank_play")  # 新增
+        self.append_keyword(self.keywords_discover, "online_discover_play")
         self.append_keyword(self.keywords_stop, "stop")
         self.append_keyword(self.keywords_playlist, "play_music_list")
         self.append_user_keyword()
@@ -301,7 +316,7 @@ class Config:
         # 转换数据
         self._active_cmd_arr = self.active_cmd.split(",") if self.active_cmd else []
         if self._active_cmd_arr:  # 新增：空闲时也要能响应新口令
-            for cmd in ("online_hot_rank_play",):
+            for cmd in ("online_hot_rank_play", "online_discover_play"):
                 if cmd not in self._active_cmd_arr:
                     self._active_cmd_arr.append(cmd)
         self._exclude_dirs_set = set(self.exclude_dirs.split(","))

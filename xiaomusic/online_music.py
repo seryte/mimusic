@@ -7,13 +7,17 @@ import asyncio
 import base64
 import ipaddress
 import json
+import os
+import random
 import socket
+import time
 import uuid
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
 
 from xiaomusic.const import PLAY_TYPE_ALL
+from xiaomusic.discover_history import DiscoverHistory
 
 LX_QUALITY_PRIORITY = ["master", "flac24bit", "flac", "320k", "192k", "128k"]
 
@@ -1242,6 +1246,309 @@ class OnlineMusicService:
             self.log.error(f"语音播放热门榜单失败: {e}")
             return await self.xiaomusic.handle_fatal_error(
                 did, "小Music播放榜单过程中出了点小故障"
+            )
+
+    def _get_discover_history(self):
+        cfg = self.xiaomusic.config
+        path = os.path.join(cfg.conf_path, "discover_history.json")
+        ttl = int(cfg.discover_history_days)
+        history = getattr(self, "_discover_history", None)
+        if history is None or history.path != path or history.ttl != ttl * 86400:
+            history = DiscoverHistory(path, ttl_days=ttl, log=self.log)
+            self._discover_history = history
+        return history
+
+    @staticmethod
+    def _discover_song_key(song):
+        sid = song.get("id")
+        if sid not in (None, ""):
+            return f"{song.get('platform') or ''}:{sid}"
+        title = str(song.get("title") or song.get("name") or "").strip().lower()
+        artist = str(song.get("artist") or "").strip().lower()
+        return f"{title}|{artist}"
+
+    @staticmethod
+    def _discover_sheet_key(plugin, sheet):
+        return f"{plugin}:sheet:{sheet.get('id')}"
+
+    @staticmethod
+    def _flatten_sheet_tags(raw):
+        """MusicFree 标签结构 {pinned:[tag], data:[{title, data:[tag]}]} → [tag, ...]"""
+        tags, seen = [], set()
+
+        def walk(node):
+            if isinstance(node, list):
+                for x in node:
+                    walk(x)
+            elif isinstance(node, dict):
+                if isinstance(node.get("data"), list) and "id" not in node:
+                    walk(node["data"])  # 分组
+                elif "id" in node or "title" in node:
+                    k = (str(node.get("id")), str(node.get("title")))
+                    if k not in seen:
+                        seen.add(k)
+                        tags.append(node)
+
+        if isinstance(raw, dict):
+            walk(raw.get("pinned") or [])
+            walk(raw.get("data") or [])
+        else:
+            walk(raw)
+        return tags
+
+    def _discover_plugins(self):
+        enabled = [
+            p for p in self.js_plugin_manager.get_enabled_plugins() if p != "OpenAPI"
+        ]
+        pref = self.js_plugin_manager.get_box_play_platform_preference()
+        if pref != "all" and pref in enabled:
+            return [pref]
+        return enabled
+
+    async def _get_recommend_tags(self, plugin):
+        cache = self.__dict__.setdefault("_discover_tag_cache", {})
+        hit = cache.get(plugin)
+        now = asyncio.get_running_loop().time()
+        if hit and now - hit[0] < self._DISCOVER_TAG_CACHE_SECONDS:
+            return hit[1]
+        raw = await asyncio.to_thread(
+            self.js_plugin_manager.get_recommend_sheet_tags, plugin
+        )
+        tags = self._flatten_sheet_tags(raw)
+        if tags:  # 没拿到就不缓存，下次再试
+            cache[plugin] = (now, tags)
+        return tags
+
+    async def _get_recommend_sheets(self, plugin, tag, page):
+        res = await asyncio.to_thread(
+            self.js_plugin_manager.get_recommend_sheets_by_tag, plugin, tag, page
+        )
+        data = res.get("data") if isinstance(res, dict) else res
+        return [x for x in (data or []) if isinstance(x, dict) and x.get("id") is not None]
+
+    async def _discover_from_recommend(self, plugin, theme, history, relaxed=False):
+        tags = await self._get_recommend_tags(plugin)
+        if theme:
+            tags = [t for t in tags if theme in str(t.get("title") or "")]
+        # 有的标签（如"置顶""默认"）会返回空，换几个标签再试
+        for tag in random.sample(tags, min(3, len(tags))):
+            page = random.randint(1, self._DISCOVER_REC_PAGES)
+            sheets = await self._get_recommend_sheets(plugin, tag, page)
+            if not sheets and page > 1:
+                sheets = await self._get_recommend_sheets(plugin, tag, 1)
+            if not relaxed:
+                sheets = [
+                    x
+                    for x in sheets
+                    if not history.has_sheet(self._discover_sheet_key(plugin, x))
+                ]
+            if sheets:
+                return (
+                    "sheet",
+                    random.choice(sheets),
+                    f"推荐歌单/{tag.get('title') or ''}",
+                )
+        return None
+
+    @staticmethod
+    def _today():
+        return time.strftime("%Y-%m-%d")
+
+    async def _discover_from_toplist(self, plugin, theme, relaxed=False):
+        # 榜单每天更新，不做歌单级别的长期去重；只记录"今天这个榜没听过的歌不够了"
+        toplists = await self._get_plugin_toplists(plugin)
+        if theme:
+            toplists = [
+                t for t in toplists if theme in str(t.get("title") or t.get("name") or "")
+            ]
+        if not relaxed:
+            done = self.__dict__.setdefault("_discover_chart_done", {})
+            today = self._today()
+            toplists = [
+                t for t in toplists if done.get(self._discover_chart_key(plugin, t)) != today
+            ]
+        if not toplists:
+            return None
+        item = random.choice(toplists)
+        return "toplist", item, f"榜单/{item.get('title') or item.get('name') or ''}"
+
+    @staticmethod
+    def _discover_chart_key(plugin, item):
+        return f"{plugin}:top:{item.get('id')}"
+
+    async def _discover_from_search(self, plugin, theme, history, relaxed=False):
+        keyword = theme or random.choice(self._discover_keywords())
+        page = random.randint(1, 3)
+        for p in (page, 1) if page > 1 else (1,):
+            res = await self.get_playlist_online(plugin=plugin, keyword=keyword, page=p)
+            data_obj = res.get("data") or res
+            if isinstance(data_obj, list):
+                playlists = data_obj
+            elif isinstance(data_obj, dict):
+                playlists = data_obj.get("list", [])
+            else:
+                playlists = []
+            playlists = [
+                x
+                for x in playlists
+                if isinstance(x, dict)
+                and x.get("id") is not None
+                and (
+                    relaxed
+                    or not history.has_sheet(self._discover_sheet_key(plugin, x))
+                )
+            ]
+            if playlists:
+                return "sheet", random.choice(playlists), f"搜索歌单/{keyword}"
+        return None
+
+    def _discover_keywords(self):
+        words = [
+            w.strip()
+            for w in self.xiaomusic.config.discover_search_keywords.split(",")
+            if w.strip()
+        ]
+        return words or ["华语经典"]
+
+    async def _discover_pick(self, plugin, theme, history, relaxed=False):
+        """按 推荐歌单 → 榜单 → 搜索歌单 的顺序，挑一个这次要听的
+
+        relaxed=True 时不再排除听过的歌单/榜单（歌曲级别的去重仍然生效）。
+        """
+        strategies = [
+            lambda: self._discover_from_recommend(plugin, theme, history, relaxed),
+            lambda: self._discover_from_toplist(plugin, theme, relaxed),
+            lambda: self._discover_from_search(plugin, theme, history, relaxed),
+        ]
+        for strategy in strategies:
+            try:
+                picked = await strategy()
+            except Exception as e:
+                self.log.warning(f"探索歌单：插件 {plugin} 的一种取法失败: {e}")
+                continue
+            if picked:
+                return picked
+        return None
+
+    async def _discover_fetch_songs(self, plugin, kind, item):
+        if kind == "toplist":
+            return await self._get_toplist_songs(plugin, item, 200)
+        songs = []
+        for page in range(1, self._DISCOVER_SHEET_PAGES + 1):
+            res = await asyncio.to_thread(
+                self.js_plugin_manager.get_music_sheet_info, plugin, item, page
+            )
+            page_data = (res or {}).get("musicList") or []
+            if not page_data:
+                break
+            songs.extend(x for x in page_data if isinstance(x, dict))
+            if res.get("isEnd", True):
+                break
+        return self._normalize_plugin_songs(plugin, songs)
+
+    async def online_discover_play(self, did="", arg1="", **kwargs):
+        """口令：探索式播放。随机挑一个没听过的歌单，歌曲打乱且不重复推荐过的
+
+        arg1 为可选的类型，如"民谣"；留空则完全随机。
+        """
+        await self._before_play(did)
+        theme = str(arg1).strip() if arg1 else ""
+        cfg = self.xiaomusic.config
+        try:
+            if not self.js_plugin_manager:
+                return await self.xiaomusic.handle_fatal_error(
+                    did, "小Music没有可用的音乐插件哦。"
+                )
+            plugins = []
+            if not self.js_plugin_manager.is_lx_server():
+                plugins = self._discover_plugins()
+            if not plugins:
+                # LX Server 没有推荐/榜单接口：随机关键词搜歌单
+                kw = theme or random.choice(self._discover_keywords())
+                self.log.info(f"探索歌单：无插件接口可用，改为搜索歌单: {kw}")
+                return await self.online_playlist_play(
+                    did, kw, skip_before_play=True
+                )
+
+            history = self._get_discover_history()
+            limit = max(int(cfg.discover_song_limit), 1)
+            min_fresh = min(self._DISCOVER_MIN_FRESH, limit)
+            best, tried, enough = None, set(), False
+            # 先排除听过的歌单；一个候选都没有时才放宽（仍然按歌曲去重）
+            for relaxed in (False, True):
+                if best is not None:
+                    break
+                for _ in range(self._DISCOVER_MAX_ATTEMPTS):
+                    plugin = random.choice(plugins)
+                    picked = await self._discover_pick(plugin, theme, history, relaxed)
+                    if not picked:
+                        continue
+                    kind, item, source = picked
+                    key = (plugin, kind, str(item.get("id")))
+                    if key in tried:
+                        continue
+                    tried.add(key)
+                    try:
+                        songs = await self._discover_fetch_songs(plugin, kind, item)
+                    except Exception as e:
+                        self.log.warning(f"探索歌单：获取歌曲失败 {source}: {e}")
+                        continue
+                    fresh = [
+                        s
+                        for s in songs
+                        if not history.has_song(self._discover_song_key(s))
+                    ]
+                    cand = {
+                        "plugin": plugin,
+                        "kind": kind,
+                        "item": item,
+                        "source": source,
+                        "songs": songs,
+                        "fresh": fresh,
+                    }
+                    if best is None or (len(fresh), len(songs)) > (
+                        len(best["fresh"]),
+                        len(best["songs"]),
+                    ):
+                        best = cand
+                    if len(fresh) >= min_fresh:
+                        enough = True
+                        break
+                    # 没听过的歌不够了，这一轮别再选它
+                    if kind == "sheet":
+                        history.add_sheet(self._discover_sheet_key(plugin, item))
+                    else:
+                        done = self.__dict__.setdefault("_discover_chart_done", {})
+                        done[self._discover_chart_key(plugin, item)] = self._today()
+                if enough:
+                    break
+
+            if best is None or not best["songs"]:
+                kw = theme or random.choice(self._discover_keywords())
+                self.log.info(f"探索歌单：没找到可用歌单，改为搜索歌单: {kw}")
+                return await self.online_playlist_play(
+                    did, kw, skip_before_play=True
+                )
+
+            pool = list(best["fresh"] or best["songs"])
+            if not best["fresh"]:
+                self.log.info("探索歌单：这个歌单的歌都听过了，仍然播放")
+            random.shuffle(pool)
+            chosen = pool[:limit]
+            if best["kind"] == "sheet":
+                history.add_sheet(self._discover_sheet_key(best["plugin"], best["item"]))
+            history.add_songs([self._discover_song_key(s) for s in chosen])
+            await asyncio.to_thread(history.save)
+            title = best["item"].get("title") or best["item"].get("name") or ""
+            self.log.info(
+                f"探索歌单：【{title}】来源:{best['plugin']}/{best['source']} "
+                f"未听过{len(best['fresh'])}/{len(best['songs'])}首，播放{len(chosen)}首"
+            )
+            return await self.push_music_list_play(did, chosen, "_online_discover")
+        except Exception as e:
+            self.log.error(f"语音探索歌单失败: {e}")
+            return await self.xiaomusic.handle_fatal_error(
+                did, "小Music探索歌单过程中出了点小故障"
             )
 
     async def singer_play(self, did="", arg1="", **kwargs):
