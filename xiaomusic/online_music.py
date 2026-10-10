@@ -1324,7 +1324,9 @@ class OnlineMusicService:
             self.js_plugin_manager.get_recommend_sheets_by_tag, plugin, tag, page
         )
         data = res.get("data") if isinstance(res, dict) else res
-        return [x for x in (data or []) if isinstance(x, dict) and x.get("id") is not None]
+        return [
+            x for x in (data or []) if isinstance(x, dict) and x.get("id") is not None
+        ]
 
     async def _discover_from_recommend(self, plugin, theme, history, relaxed=False):
         tags = await self._get_recommend_tags(plugin)
@@ -1359,13 +1361,17 @@ class OnlineMusicService:
         toplists = await self._get_plugin_toplists(plugin)
         if theme:
             toplists = [
-                t for t in toplists if theme in str(t.get("title") or t.get("name") or "")
+                t
+                for t in toplists
+                if theme in str(t.get("title") or t.get("name") or "")
             ]
         if not relaxed:
             done = self.__dict__.setdefault("_discover_chart_done", {})
             today = self._today()
             toplists = [
-                t for t in toplists if done.get(self._discover_chart_key(plugin, t)) != today
+                t
+                for t in toplists
+                if done.get(self._discover_chart_key(plugin, t)) != today
             ]
         if not toplists:
             return None
@@ -1466,9 +1472,7 @@ class OnlineMusicService:
                 # LX Server 没有推荐/榜单接口：随机关键词搜歌单
                 kw = theme or random.choice(self._discover_keywords())
                 self.log.info(f"探索歌单：无插件接口可用，改为搜索歌单: {kw}")
-                return await self.online_playlist_play(
-                    did, kw, skip_before_play=True
-                )
+                return await self.online_playlist_play(did, kw, skip_before_play=True)
 
             history = self._get_discover_history()
             limit = max(int(cfg.discover_song_limit), 1)
@@ -1526,9 +1530,7 @@ class OnlineMusicService:
             if best is None or not best["songs"]:
                 kw = theme or random.choice(self._discover_keywords())
                 self.log.info(f"探索歌单：没找到可用歌单，改为搜索歌单: {kw}")
-                return await self.online_playlist_play(
-                    did, kw, skip_before_play=True
-                )
+                return await self.online_playlist_play(did, kw, skip_before_play=True)
 
             pool = list(best["fresh"] or best["songs"])
             if not best["fresh"]:
@@ -1536,7 +1538,9 @@ class OnlineMusicService:
             random.shuffle(pool)
             chosen = pool[:limit]
             if best["kind"] == "sheet":
-                history.add_sheet(self._discover_sheet_key(best["plugin"], best["item"]))
+                history.add_sheet(
+                    self._discover_sheet_key(best["plugin"], best["item"])
+                )
             history.add_songs([self._discover_song_key(s) for s in chosen])
             await asyncio.to_thread(history.save)
             title = best["item"].get("title") or best["item"].get("name") or ""

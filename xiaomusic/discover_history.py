@@ -61,7 +61,10 @@ class DiscoverHistory:
 
     def _prune(self):
         now = time.time()
-        for store, limit in ((self.sheets, self.max_sheets), (self.songs, self.max_songs)):
+        for store, limit in (
+            (self.sheets, self.max_sheets),
+            (self.songs, self.max_songs),
+        ):
             if self.ttl:
                 for key in [k for k, ts in store.items() if now - ts > self.ttl]:
                     del store[key]
