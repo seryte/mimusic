@@ -1189,12 +1189,16 @@ class OnlineMusicService:
                 page += 1
         except Exception as e:
             self.log.warning(f"插件 {plugin} 获取榜单详情失败: {e}")
-        for s in songs:
-            s.setdefault("platform", plugin)
-            # _convert_song_list_to_music_items 需要 title 和 artist 都是字符串
-            s["title"] = s.get("title") or s.get("name") or "未知歌曲"
-            s["artist"] = s.get("artist") or "未知艺术家"
-        return songs[:limit]
+        return self._normalize_plugin_songs(plugin, songs)[:limit]
+
+    @staticmethod
+    def _normalize_plugin_songs(plugin, songs):
+        """补齐 platform/title/artist 字段（_convert_song_list_to_music_items 要求 title、artist 都是字符串）"""
+        for song in songs:
+            song.setdefault("platform", plugin)
+            song["title"] = str(song.get("title") or song.get("name") or "未知歌曲")
+            song["artist"] = str(song.get("artist") or "未知艺术家")
+        return songs
 
     async def online_hot_rank_play(self, did="", arg1="", **kwargs):
         """口令：播放热门榜单/排行榜"""
