@@ -1248,6 +1248,14 @@ class OnlineMusicService:
                 did, "小Music播放榜单过程中出了点小故障"
             )
 
+    # ---------------------------- 探索式播放（随机、不重样） ----------------------------
+
+    _DISCOVER_MAX_ATTEMPTS = 4  # 最多换几次歌单，直到凑够没听过的歌
+    _DISCOVER_MIN_FRESH = 8  # 一个歌单里至少有这么多没听过的歌才算合格
+    _DISCOVER_REC_PAGES = 5  # 推荐歌单随机翻页的范围
+    _DISCOVER_SHEET_PAGES = 3  # 歌单详情最多取几页
+    _DISCOVER_TAG_CACHE_SECONDS = 6 * 3600
+
     def _get_discover_history(self):
         cfg = self.xiaomusic.config
         path = os.path.join(cfg.conf_path, "discover_history.json")
