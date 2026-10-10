@@ -117,19 +117,57 @@ class XiaoMusicDevice:
         return cmd_map.get(self.hardware)
 
     async def do_native_command(self, text):
-        """把一句话当作用户亲口说出，直接交给小爱原生执行"""
+        """把一句话交给小爱原生执行，效果等同于对音箱说出这句话（如"关闭电视"）
+
+        依赖设备的 execute-text-directive 能力，成功返回 True。
+        通道由 native_command_channel 决定（auto/mijia/miio）。
+        """
         cmd = self._get_text_directive_cmd()
         if not cmd:
-            self.log.warning(f"当前型号 {self.hardware} 没有配置执行文本指令编号")
+            self.log.warning(
+                f"设备型号 {self.hardware} 没有配置原生文本指令编号，"
+                f"请在 text_directive_commands 中配置。text:{text}"
+            )
+            return False
+        channel = (self.config.native_command_channel or "auto").lower()
+        if channel not in ("auto", "mijia", "miio"):
+            self.log.warning(f"native_command_channel={channel} 无效，按 auto 处理")
+            channel = "auto"
+        if channel in ("auto", "mijia") and await self._native_via_mijia(cmd, text):
+            return True
+        if channel in ("auto", "miio") and await self._native_via_miio(cmd, text):
+            return True
+        return False
+
+    async def _native_via_mijia(self, cmd, text):
+        """米家接口通道：使用扫码登录的 auth.json，不触发 xiaomiio 二次验证"""
+        try:
+            siid, aiid = (int(x) for x in cmd.split("-"))
+            ret = await self.auth_manager.mijia_action(self.did, siid, aiid, [text, 0])
+            self.log.info(f"do_native_command(mijia) ok. cmd:{cmd} text:{text} ret:{ret}")
+            return True
+        except RuntimeError as e:
+            self.log.info(f"do_native_command(mijia) 不可用: {e}")
+        except Exception as e:
+            self.log.warning(f"do_native_command(mijia) failed. text:{text} {type(e).__name__}: {e}")
+        return False
+
+    async def _native_via_miio(self, cmd, text):
+        """MIoT 账号接口通道（xiaomiio）"""
+        if self.auth_manager.miio_service is None:
+            self.log.warning(f"miio_service 未初始化（登录失败？），无法执行: {text}")
             return False
         try:
+            text = str(text).replace(" ", ",")  # 指令参数不能有空格
             ret = await miio_command(
-                self.auth_manager.miio_service, self.did, f"{cmd} {text} 0"
+                self.auth_manager.miio_service,
+                self.did,
+                f"{cmd} {text} 0",  # 最后一个参数 0 表示非静默执行
             )
-            self.log.info(f"do_native_command ok: {text} ret: {ret}")
+            self.log.info(f"do_native_command(miio) ok. cmd:{cmd} text:{text} ret:{ret}")
             return True
         except Exception as e:
-            self.log.warning(f"do_native_command failed: {e}")
+            self.log.warning(f"do_native_command(miio) failed. text:{text} {e}")
             return False
 
     def get_cur_music(self):

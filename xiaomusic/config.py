@@ -215,6 +215,11 @@ class Config:
     crontab_json: str = os.getenv("XIAOMUSIC_CRONTAB_JSON", "")  # 定时任务
     # 执行文本指令编号覆盖：{"硬件型号": "siid-aiid"}，不填用内置 TEXT_DIRECTIVE_COMMAND 默认值
     text_directive_commands: str = os.getenv("XIAOMUSIC_TEXT_DIRECTIVE_COMMANDS", "")
+    # 定时任务 command 转发给小爱原生执行时的通道:
+    #   auto  = 先走米家接口(扫码登录的 auth.json，无需二次验证)，不可用/失败再走 MIoT 账号接口
+    #   mijia = 只走米家接口
+    #   miio  = 只走 MIoT 账号接口(xiaomiio，可能触发小米二次验证)
+    native_command_channel: str = os.getenv("XIAOMUSIC_NATIVE_COMMAND_CHANNEL", "auto")
     enable_yt_dlp_cookies: bool = (
         os.getenv("XIAOMUSIC_ENABLE_YT_DLP_COOKIES", "false").lower() == "true"
     )

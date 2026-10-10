@@ -18,6 +18,7 @@ from miservice import MiAccount, MiIOService, MiNAService
 
 from xiaomusic.config import Device
 from xiaomusic.const import COOKIE_TEMPLATE
+from xiaomusic.qrcode_login import MiJiaAPI
 from xiaomusic.utils.system_utils import (
     get_random,
     parse_cookie_string,
@@ -335,6 +336,7 @@ class AuthManager:
 
         async def patched_service_login(uri, data=None):
             resp = await original(uri, data)
+            need_verify = None
             try:
                 if not (isinstance(resp, dict) and resp.get("code") == 0):
                     return resp
@@ -359,6 +361,7 @@ class AuthManager:
                         "[PATCH-login] 小米要求二次验证，请在浏览器打开此链接完成验证后重试: "
                         f"{resp['notificationUrl']}"
                     )
+                    need_verify = resp.get("securityStatus", "?")
                 token = mi_account.token or {}
                 if (
                     password_fallback
@@ -376,9 +379,51 @@ class AuthManager:
                     return resp2
             except Exception as e:
                 log.warning(f"[PATCH-login] 登录补丁处理异常: {type(e).__name__}: {e}")
+            if need_verify is not None:
+                # 在 try 之外抛出；miservice 的 login() 会捕获并记录这条原因
+                raise Exception(
+                    f"小米要求二次验证(securityStatus={need_verify})，"
+                    "请按上面日志里的链接在浏览器完成验证"
+                )
             return resp
 
         mi_account._serviceLogin = patched_service_login
+
+    def _get_miio_device_id(self):
+        """MIoT 账号使用固定的 deviceId
+
+        miservice 每次从空 token 登录都会随机生成 deviceId。二次验证若是按设备
+        记录信任的（推测，未证实），随机换 ID 会导致反复要求验证，所以持久化一个。
+        """
+        path = os.path.join(self.config.conf_path, ".mi.miio.device")
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("account") == self.config.account and data.get("deviceId"):
+                return data["deviceId"]
+        except Exception:
+            pass
+        device_id = get_random(16).upper()
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"account": self.config.account, "deviceId": device_id}, f)
+        except Exception as e:
+            self.log.warning(f"[AUTH] 保存 MIoT deviceId 失败: {e}")
+        return device_id
+
+    async def mijia_action(self, did, siid, aiid, value=None):
+        """通过米家(Mi Home)接口调用 MIoT action
+
+        使用扫码登录得到的 auth.json（sid=mijia），不需要 xiaomiio 登录，
+        因此不会触发 xiaomiio 的二次验证。
+        """
+        api = MiJiaAPI(auth_data_path=self.config.conf_path or None)
+        required = ("ua", "ssecurity", "userId", "cUserId", "serviceToken")
+        if not api.auth_data or any(k not in api.auth_data for k in required):
+            raise RuntimeError("没有可用的米家扫码登录凭据（auth.json 缺失或不完整）")
+        return await asyncio.to_thread(
+            api.run_action, str(did), int(siid), int(aiid), value
+        )
 
     def _setup_miio_service(self, main_account):
         """创建 MIoT(xiaomiio) 专用的独立账号和会话
@@ -407,6 +452,7 @@ class AuthManager:
                 self.config.password,
                 token_path,
             )
+            device_id = self._get_miio_device_id()
             if not self.config.password:
                 # 没有密码（扫码/cookie 登录）只能复用主账号的 passToken
                 src = main_account.token or {}
@@ -416,6 +462,18 @@ class AuthManager:
                         for k in ("deviceId", "userId", "passToken")
                         if k in src
                     }
+            else:
+                account.token = {"deviceId": device_id}
+
+            original_login = account.login
+
+            async def login_keep_device(sid):
+                # miservice 在 token 为空时会随机生成 deviceId，这里固定住
+                if not account.token:
+                    account.token = {"deviceId": device_id}
+                return await original_login(sid)
+
+            account.login = login_keep_device
             self._patch_service_login(
                 account, password_fallback=bool(self.config.password)
             )

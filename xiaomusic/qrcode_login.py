@@ -455,6 +455,20 @@ class MiJiaAPI:
             )
         return ret_data["result"]
 
+    def run_action(
+        self, did: str, siid: int, aiid: int, value: list | None = None
+    ) -> dict:
+        """调用 MIoT action（走米家接口，凭据来自扫码登录的 auth.json）"""
+        data = {
+            "params": {
+                "did": did,
+                "siid": siid,
+                "aiid": aiid,
+                "in": value if value is not None else [],
+            }
+        }
+        return self._request("/miotspec/action", data)
+
     def check_new_msg(
         self, begin_at: int = int(time.time()) - 3600, refresh_token: bool = True
     ) -> dict:
