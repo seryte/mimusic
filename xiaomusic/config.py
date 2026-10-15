@@ -187,6 +187,9 @@ class Config:
     discover_song_limit: int = int(os.getenv("XIAOMUSIC_DISCOVER_SONG_LIMIT", "30"))
     # 推荐过的歌单/歌曲多少天内不再重复推荐（0 表示永不重复）
     discover_history_days: int = int(os.getenv("XIAOMUSIC_DISCOVER_HISTORY_DAYS", "90"))
+    # 挑歌单时对热度的偏好：0=完全随机（容易挑到冷门歌单），1=按播放量加权（默认），
+    # 2=更偏向最热的歌单
+    discover_hot_bias: float = float(os.getenv("XIAOMUSIC_DISCOVER_HOT_BIAS", "1.0"))
     # 插件没有推荐歌单/榜单接口时，随机从这些关键词里搜歌单
     discover_search_keywords: str = os.getenv(
         "XIAOMUSIC_DISCOVER_SEARCH_KEYWORDS",

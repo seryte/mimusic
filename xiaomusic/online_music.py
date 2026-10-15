@@ -1256,7 +1256,8 @@ class OnlineMusicService:
 
     _DISCOVER_MAX_ATTEMPTS = 4  # 最多换几次歌单，直到凑够没听过的歌
     _DISCOVER_MIN_FRESH = 8  # 一个歌单里至少有这么多没听过的歌才算合格
-    _DISCOVER_REC_PAGES = 5  # 推荐歌单随机翻页的范围
+    _DISCOVER_REC_PAGES = 5  # 候选不够时，最多往后翻几页
+    _DISCOVER_POOL_SIZE = 8  # 凑够这么多个没推荐过的歌单再按热度挑
     _DISCOVER_SHEET_PAGES = 3  # 歌单详情最多取几页
     _DISCOVER_TAG_CACHE_SECONDS = 6 * 3600
 
@@ -1340,29 +1341,87 @@ class OnlineMusicService:
             x for x in (data or []) if isinstance(x, dict) and x.get("id") is not None
         ]
 
+    @staticmethod
+    def _parse_play_count(value):
+        """播放量 → 数字；认不出返回 None。支持数字、纯数字字符串、"1.2万"、"3亿"。"""
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value) if value == value and value >= 0 else None
+        text = str(value).strip().replace(",", "")
+        mult = 1
+        if text.endswith("万"):
+            mult, text = 10000, text[:-1]
+        elif text.endswith("亿"):
+            mult, text = 100000000, text[:-1]
+        try:
+            num = float(text) * mult
+        except ValueError:
+            return None
+        return num if num == num and num >= 0 else None
+
+    def _discover_weighted_pick(self, sheets):
+        """按播放量加权挑一个歌单。discover_hot_bias=0 时完全随机
+
+        权重 = 播放量 ** discover_hot_bias；没有播放量的按已知播放量的中位数算。
+        """
+        if len(sheets) <= 1:
+            return sheets[0]
+        bias = float(self.xiaomusic.config.discover_hot_bias)
+        if bias <= 0:
+            return random.choice(sheets)
+        counts = [
+            self._parse_play_count(x.get("playCount", x.get("play_count")))
+            for x in sheets
+        ]
+        known = sorted(c for c in counts if c is not None)
+        if not known or known[-1] <= 0:
+            return random.choice(sheets)
+        median = known[len(known) // 2]
+        weights = [max(c if c is not None else median, 1.0) ** bias for c in counts]
+        return random.choices(sheets, weights=weights, k=1)[0]
+
     async def _discover_from_recommend(self, plugin, theme, history, relaxed=False):
         tags = await self._get_recommend_tags(plugin)
         if theme:
             tags = [t for t in tags if theme in str(t.get("title") or "")]
-        # 有的标签（如"置顶""默认"）会返回空，换几个标签再试
-        for tag in random.sample(tags, min(3, len(tags))):
-            page = random.randint(1, self._DISCOVER_REC_PAGES)
-            sheets = await self._get_recommend_sheets(plugin, tag, page)
-            if not sheets and page > 1:
-                sheets = await self._get_recommend_sheets(plugin, tag, 1)
-            if not relaxed:
-                sheets = [
-                    x
-                    for x in sheets
-                    if not history.has_sheet(self._discover_sheet_key(plugin, x))
-                ]
-            if sheets:
-                return (
-                    "sheet",
-                    random.choice(sheets),
-                    f"推荐歌单/{tag.get('title') or ''}",
-                )
-        return None
+        if not tags:
+            return None
+        # 随机取几个标签（有的标签如"置顶""默认"会返回空），从第 1 页开始并发取，
+        # 候选不够再往后翻页；最后按播放量加权挑，避免总是落到冷门歌单
+        chosen = random.sample(tags, min(3, len(tags)))
+        pool, seen_ids, first_error = [], set(), None
+        for page in range(1, self._DISCOVER_REC_PAGES + 1):
+            results = await asyncio.gather(
+                *(self._get_recommend_sheets(plugin, t, page) for t in chosen),
+                return_exceptions=True,
+            )
+            got_any = False
+            for tag, res in zip(chosen, results, strict=True):
+                if isinstance(res, Exception):
+                    first_error = first_error or res
+                    continue
+                if res:
+                    got_any = True
+                for x in res:
+                    sid = str(x.get("id"))
+                    if sid in seen_ids:
+                        continue
+                    if not relaxed and history.has_sheet(
+                        self._discover_sheet_key(plugin, x)
+                    ):
+                        continue
+                    seen_ids.add(sid)
+                    pool.append((x, tag))
+            if len(pool) >= self._DISCOVER_POOL_SIZE or not got_any:
+                break
+        if not pool:
+            if first_error:
+                raise first_error  # 让上层记录并换下一种取法
+            return None
+        sheet = self._discover_weighted_pick([x for x, _ in pool])
+        tag = next(t for x, t in pool if x is sheet)
+        return "sheet", sheet, f"推荐歌单/{tag.get('title') or ''}"
 
     @staticmethod
     def _today():
@@ -1396,9 +1455,11 @@ class OnlineMusicService:
 
     async def _discover_from_search(self, plugin, theme, history, relaxed=False):
         keyword = theme or random.choice(self._discover_keywords())
-        page = random.randint(1, 3)
-        for p in (page, 1) if page > 1 else (1,):
-            res = await self.get_playlist_online(plugin=plugin, keyword=keyword, page=p)
+        pool, seen_ids = [], set()
+        for page in (1, 2):
+            res = await self.get_playlist_online(
+                plugin=plugin, keyword=keyword, page=page
+            )
             data_obj = res.get("data") or res
             if isinstance(data_obj, list):
                 playlists = data_obj
@@ -1406,18 +1467,21 @@ class OnlineMusicService:
                 playlists = data_obj.get("list", [])
             else:
                 playlists = []
-            playlists = [
-                x
-                for x in playlists
-                if isinstance(x, dict)
-                and x.get("id") is not None
-                and (
-                    relaxed
-                    or not history.has_sheet(self._discover_sheet_key(plugin, x))
-                )
-            ]
-            if playlists:
-                return "sheet", random.choice(playlists), f"搜索歌单/{keyword}"
+            for x in playlists:
+                if not isinstance(x, dict) or x.get("id") is None:
+                    continue
+                if str(x.get("id")) in seen_ids:
+                    continue
+                if not relaxed and history.has_sheet(
+                    self._discover_sheet_key(plugin, x)
+                ):
+                    continue
+                seen_ids.add(str(x.get("id")))
+                pool.append(x)
+            if len(pool) >= self._DISCOVER_POOL_SIZE or not playlists:
+                break
+        if pool:
+            return "sheet", self._discover_weighted_pick(pool), f"搜索歌单/{keyword}"
         return None
 
     def _discover_keywords(self):
