@@ -28,12 +28,7 @@ _TIMER_PATTERNS = [
     (re.compile(rf"^{_NUM}\s*分钟后(.+)$"), 60, None, None),
     (re.compile(rf"^{_NUM}\s*小时后(.+)$"), 3600, None, None),
     (re.compile(r"^半\s*个?\s*小时后(.+)$"), None, 1800, "半小时"),
-    (
-        re.compile(r"^(?:一\s*个\s*半|1\s*个\s*半)\s*小时后(.+)$"),
-        None,
-        5400,
-        "一个半小时",
-    ),
+    (re.compile(r"^(?:一\s*个\s*半|1\s*个\s*半)\s*小时后(.+)$"), None, 5400, "一个半小时"),
 ]
 
 
@@ -86,3 +81,17 @@ def cron_expression_for(fire_at: datetime) -> str:
     否则每年同一时刻会再触发一次。
     """
     return f"{fire_at.minute} {fire_at.hour} {fire_at.day} {fire_at.month} *"
+
+
+# 小爱原生处理定时失败时的回复特征（保守匹配：只认这种明确表述）
+NATIVE_TIMER_UNSUPPORTED_HINTS = ("找不到设备",)
+
+
+def native_timer_failed(answer) -> bool:
+    """判断小爱原生是否明确表示处理不了这条定时口令。
+
+    保守策略：无回复或回复不明时返回 False（不接管），避免误伤原生支持的设备。
+    """
+    if not answer:
+        return False
+    return any(h in answer for h in NATIVE_TIMER_UNSUPPORTED_HINTS)

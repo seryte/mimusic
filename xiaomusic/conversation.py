@@ -81,7 +81,16 @@ class ConversationPoller:
 
                     query = new_record.get("query", "").strip()
                     did = new_record.get("did", "").strip()
-                    await do_check_cmd_callback(did, query, False)
+                    # 取出小爱原生回复文本，用于判断定时口令是否被原生处理失败；
+                    # mina 路径 answer 在 record 顶层，xiaoai 路径在 answers[0].tts.text
+                    native_answer = (new_record.get("answer") or "").strip()
+                    if not native_answer:
+                        for _a in new_record.get("answers", []):
+                            _t = _a.get("tts", {}).get("text", "").strip()
+                            if _t:
+                                native_answer = _t
+                                break
+                    await do_check_cmd_callback(did, query, False, answer=native_answer)
 
                     answer = new_record.get("answer")
                     answers = new_record.get("answers", [{}])

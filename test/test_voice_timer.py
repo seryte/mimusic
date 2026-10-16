@@ -1,8 +1,11 @@
 """语音定时器解析单测：python test/test_voice_timer.py 或 pytest test/test_voice_timer.py"""
-
 from datetime import datetime
 
-from xiaomusic.voice_timer import cron_expression_for, parse_voice_timer
+from xiaomusic.voice_timer import (
+    cron_expression_for,
+    native_timer_failed,
+    parse_voice_timer,
+)
 
 
 def test_minutes():
@@ -58,6 +61,17 @@ def test_invalid():
 def test_cron_expression():
     assert cron_expression_for(datetime(2026, 10, 16, 18, 54)) == "54 18 16 10 *"
     assert cron_expression_for(datetime(2026, 1, 5, 0, 3)) == "3 0 5 1 *"
+
+
+def test_native_timer_failed():
+    # 只有原生明确说"找不到设备"才接管
+    assert native_timer_failed("找不到设备，请去米家先添加设备吧") is True
+    # 原生能处理的（灯/电视等）：不接管，避免重复执行
+    assert native_timer_failed("好的，已为你设置5分钟后关闭客厅灯") is False
+    assert native_timer_failed("好的") is False
+    # 无回复/回复不明：保守起见不接管
+    assert native_timer_failed("") is False
+    assert native_timer_failed(None) is False
 
 
 if __name__ == "__main__":

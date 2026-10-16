@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from xiaomusic.xiaomusic import XiaoMusic
 from xiaomusic.config import KEY_WORD_ARG_BEFORE_DICT
-from xiaomusic.voice_timer import parse_voice_timer
+from xiaomusic.voice_timer import native_timer_failed, parse_voice_timer
 
 if TYPE_CHECKING:
     pass
@@ -35,7 +35,7 @@ class CommandHandler:
         self.xiaomusic = xiaomusic_instance
         self.last_cmd = ""
 
-    async def do_check_cmd(self, did="", query="", ctrl_panel=True, **kwargs):
+    async def do_check_cmd(self, did="", query="", ctrl_panel=True, answer="", **kwargs):
         """检查并执行命令
         这是命令处理的入口方法，负责：
         1. 记录命令
@@ -57,7 +57,7 @@ class CommandHandler:
         try:
             device = self.xiaomusic.device_manager.devices[did]
             # 匹配命令
-            opvalue, oparg = self.match_cmd(device, query, ctrl_panel)
+            opvalue, oparg = self.match_cmd(device, query, ctrl_panel, answer)
             if not opvalue:
                 # 未匹配到命令，等待后检查是否需要重播
                 await asyncio.sleep(1)
@@ -74,20 +74,23 @@ class CommandHandler:
         except Exception as e:
             self.log.exception(f"Execption {e}")
 
-    def match_cmd(self, device, query, ctrl_panel):
+    def match_cmd(self, device, query, ctrl_panel, answer=""):
         """匹配命令
 
         根据用户输入的查询字符串，匹配对应的命令和参数。
 
         匹配策略：
         1. 优先完全匹配
-        2. 然后按配置的优先级顺序进行模糊匹配
-        3. 检查是否在激活命令列表中
+        2. 语音定时器兜底：仅当小爱原生明确处理失败（回复含"找不到设备"）时接管，
+           原生支持定时的设备（灯/电视等）完全不碰，避免重复执行
+        3. 然后按配置的优先级顺序进行模糊匹配
+        4. 检查是否在激活命令列表中
 
         Args:
             device: 设备
             query: 用户查询字符串
             ctrl_panel: 是否来自控制面板
+            answer: 小爱原生回复文本（对话流传入；用于判断原生是否处理失败）
 
         Returns:
             tuple: (命令值, 命令参数)，未匹配返回 (None, None)
@@ -110,10 +113,11 @@ class CommandHandler:
                 return "exec", code
             return opvalue, ""
 
-        # 语音定时器："5分钟后关闭风扇" → 自动创建一次性定时任务
-        # 放在完全匹配之后、模糊匹配之前，定时口令优先于普通关键词匹配
-        if parse_voice_timer(query):
-            self.log.info(f"匹配到语音定时器. query:{query}")
+        # 语音定时器兜底："5分钟后关闭风扇" → 自动创建一次性定时任务
+        # 放在完全匹配之后、模糊匹配之前；且仅当小爱原生明确处理失败时才接管，
+        # 原生支持定时的设备（灯/电视等）完全不碰，避免两边重复执行
+        if native_timer_failed(answer) and parse_voice_timer(query):
+            self.log.info(f"匹配到语音定时器（原生不支持）. query:{query} answer:{answer}")
             return "do_voice_timer", query
 
         # 按优先级顺序进行模糊匹配

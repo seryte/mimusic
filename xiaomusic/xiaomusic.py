@@ -309,12 +309,11 @@ class XiaoMusic:
         return ok
 
     async def do_voice_timer(self, did, arg1):
-        """语音定时器："5分钟后关闭风扇" → 自动生成一次性定时表达式并创建任务。
+        """语音定时器兜底："5分钟后关闭风扇" → 自动生成一次性定时表达式并创建任务。
 
-        动机：红外设备等小爱原生不支持"X分钟后做Y"（报"找不到设备"），但支持
-        即时指令。匹配到定时口令后，do_check_cmd 已先止住小爱的失败提示，
-        这里创建一次性任务，到点走 run_voice_command（先 xiaomusic 匹配，
-        不中再走 native）执行原指令。
+        触发条件（command_handler 已判断）：小爱原生明确处理失败（回复含"找不到设备"），
+        如红外设备等不支持原生定时的设备。原生支持定时的设备（灯/电视等）不会走到这里。
+        到点走 run_voice_command（先 xiaomusic 匹配，不中再走 native）执行原指令。
         """
         parsed = parse_voice_timer(arg1)
         if not parsed:
