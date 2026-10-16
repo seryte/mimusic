@@ -28,7 +28,12 @@ _TIMER_PATTERNS = [
     (re.compile(rf"^{_NUM}\s*分钟后(.+)$"), 60, None, None),
     (re.compile(rf"^{_NUM}\s*小时后(.+)$"), 3600, None, None),
     (re.compile(r"^半\s*个?\s*小时后(.+)$"), None, 1800, "半小时"),
-    (re.compile(r"^(?:一\s*个\s*半|1\s*个\s*半)\s*小时后(.+)$"), None, 5400, "一个半小时"),
+    (
+        re.compile(r"^(?:一\s*个\s*半|1\s*个\s*半)\s*小时后(.+)$"),
+        None,
+        5400,
+        "一个半小时",
+    ),
 ]
 
 

@@ -106,7 +106,9 @@ class Crontab:
             )
             return True
         except Exception:
-            self.log.exception(f"add_once_job failed. expression:{expression} id:{job_id}")
+            self.log.exception(
+                f"add_once_job failed. expression:{expression} id:{job_id}"
+            )
             return False
 
     def remove_job(self, job_id):
