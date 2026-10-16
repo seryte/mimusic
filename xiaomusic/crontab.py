@@ -1,3 +1,4 @@
+import datetime
 import json
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -125,9 +126,75 @@ class Crontab:
     # 添加语音播放任务
     def add_job_tts(self, expression, xiaomusic, did, arg1, **kwargs):
         async def job():
-            await xiaomusic.do_tts(did, arg1)
+            text = await self._resolve_tts_text(xiaomusic, arg1)
+            await xiaomusic.do_tts(did, text)
 
         self.add_job(expression, job)
+
+    async def _resolve_tts_text(self, xiaomusic, arg1):
+        """解析 TTS 文案：arg1 以 'ai:' 开头时调用大模型动态生成，失败则回退。
+
+        写法: "ai:提示词 || 兜底文案"（兜底文案可选，LLM 不可用时使用）
+        """
+        if not arg1 or not arg1.startswith("ai:"):
+            return arg1
+        rest = arg1[3:].strip()
+        if "||" in rest:
+            prompt, fallback = (p.strip() for p in rest.split("||", 1))
+        else:
+            prompt, fallback = rest, ""
+        if not prompt:
+            prompt = "写一句30字以内的中文起床号，催小朋友起床去学校，活泼有趣"
+        text = await self._generate_text_with_llm(xiaomusic, prompt)
+        if text:
+            return text
+        if fallback:
+            self.log.warning("AI 生成 TTS 文案失败，使用兜底文案")
+            return fallback
+        self.log.warning("AI 生成 TTS 文案失败且无兜底文案，使用默认文案")
+        return "起床啦，该起床去学校了！"
+
+    async def _generate_text_with_llm(self, xiaomusic, prompt):
+        """调用配置好的 AI 接口生成文本，失败返回 None。"""
+        try:
+            mgr = getattr(xiaomusic, "js_plugin_manager", None)
+            ai_info = mgr.get_aiapi_info() if mgr else {}
+            if not ai_info.get("enabled", False) or not ai_info.get("api_key"):
+                self.log.warning("AI 接口未启用或未配置 api_key，跳过 AI 生成")
+                return None
+            from xiaomusic.utils.openai_utils import (
+                call_openai_chat,
+                create_openai_client,
+            )
+
+            weekday = "一二三四五六日"[datetime.datetime.now().weekday()]
+            client = create_openai_client(
+                ai_info.get("base_url")
+                or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                ai_info["api_key"],
+            )
+            text = await call_openai_chat(
+                client,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是一个中文起床号播报员。只输出播报文本本身，不要带引号、不要解释、不要多余的话。",
+                    },
+                    {"role": "user", "content": f"今天是周{weekday}。{prompt}"},
+                ],
+                model=ai_info.get("model") or "qwen-flash",
+                temperature=0.9,
+                max_tokens=120,
+                timeout=15,
+            )
+            if text:
+                text = text.strip().strip("\"'“”")
+                self.log.info(f"AI 生成的 TTS 文案: {text}")
+                return text
+            return None
+        except Exception as e:
+            self.log.warning(f"AI 生成 TTS 文案异常: {e}")
+            return None
 
     def add_job_command(self, expression, xiaomusic, did, arg1, **kwargs):
         """添加口令任务：到点后相当于对小爱音箱说出 arg1 这句话
