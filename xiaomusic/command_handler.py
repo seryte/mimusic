@@ -35,7 +35,9 @@ class CommandHandler:
         self.xiaomusic = xiaomusic_instance
         self.last_cmd = ""
 
-    async def do_check_cmd(self, did="", query="", ctrl_panel=True, answer="", **kwargs):
+    async def do_check_cmd(
+        self, did="", query="", ctrl_panel=True, answer="", **kwargs
+    ):
         """检查并执行命令
         这是命令处理的入口方法，负责：
         1. 记录命令
@@ -117,7 +119,9 @@ class CommandHandler:
         # 放在完全匹配之后、模糊匹配之前；且仅当小爱原生明确处理失败时才接管，
         # 原生支持定时的设备（灯/电视等）完全不碰，避免两边重复执行
         if native_timer_failed(answer) and parse_voice_timer(query):
-            self.log.info(f"匹配到语音定时器（原生不支持）. query:{query} answer:{answer}")
+            self.log.info(
+                f"匹配到语音定时器（原生不支持）. query:{query} answer:{answer}"
+            )
             return "do_voice_timer", query
 
         # 按优先级顺序进行模糊匹配
