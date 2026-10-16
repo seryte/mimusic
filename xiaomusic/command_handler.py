@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from xiaomusic.xiaomusic import XiaoMusic
 from xiaomusic.config import KEY_WORD_ARG_BEFORE_DICT
+from xiaomusic.voice_timer import parse_voice_timer
 
 if TYPE_CHECKING:
     pass
@@ -108,6 +109,12 @@ class CommandHandler:
                 code = opvalue.split("#", 1)[1]
                 return "exec", code
             return opvalue, ""
+
+        # 语音定时器："5分钟后关闭风扇" → 自动创建一次性定时任务
+        # 放在完全匹配之后、模糊匹配之前，定时口令优先于普通关键词匹配
+        if parse_voice_timer(query):
+            self.log.info(f"匹配到语音定时器. query:{query}")
+            return "do_voice_timer", query
 
         # 按优先级顺序进行模糊匹配
         for opkey in self.config.key_match_order:

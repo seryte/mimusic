@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import asyncio
+import json
 import logging
 import os
 import re
+import uuid
+from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 
 import aiohttp
@@ -31,6 +34,11 @@ from xiaomusic.plugin import PluginManager
 from xiaomusic.utils.network_utils import download_plugin_audio, downloadfile
 from xiaomusic.utils.system_utils import deepcopy_data_no_sensitive_info
 from xiaomusic.utils.text_utils import chinese_to_number
+from xiaomusic.voice_timer import (
+    MAX_DELAY_SECONDS,
+    cron_expression_for,
+    parse_voice_timer,
+)
 
 
 class XiaoMusic:
@@ -299,6 +307,121 @@ class XiaoMusic:
             self.log.warning(f"run_voice_command: 原生执行异常 {e}")
             return False
         return ok
+
+    async def do_voice_timer(self, did, arg1):
+        """语音定时器："5分钟后关闭风扇" → 自动生成一次性定时表达式并创建任务。
+
+        动机：红外设备等小爱原生不支持"X分钟后做Y"（报"找不到设备"），但支持
+        即时指令。匹配到定时口令后，do_check_cmd 已先止住小爱的失败提示，
+        这里创建一次性任务，到点走 run_voice_command（先 xiaomusic 匹配，
+        不中再走 native）执行原指令。
+        """
+        parsed = parse_voice_timer(arg1)
+        if not parsed:
+            return
+        delay_s, action, delay_text = parsed
+        if delay_s > MAX_DELAY_SECONDS:
+            await self.do_tts(did, "时间太久了，换个近一点的时间吧")
+            return
+        now = datetime.now()
+        fire_at = now + timedelta(seconds=delay_s)
+        record = {
+            "id": f"voice_timer_{int(now.timestamp())}_{uuid.uuid4().hex[:6]}",
+            "did": did,
+            "action": action,
+            "raw": arg1,
+            "expression": cron_expression_for(fire_at),
+            "fire_at": fire_at.isoformat(timespec="seconds"),
+            "created": now.isoformat(timespec="seconds"),
+        }
+        if not self._register_voice_timer(record):
+            await self.do_tts(did, "定时创建失败了，换个说法试试")
+            return
+        self._save_voice_timer(record)
+        self.log.info(
+            f"voice_timer 已创建 id={record['id']} "
+            f"expression='{record['expression']}' action='{action}'"
+        )
+        await self.do_tts(did, f"好的，{delay_text}后{action}")
+
+    def _register_voice_timer(self, record):
+        """向调度器注册一次性语音定时器；返回是否成功。"""
+        try:
+            fire_at = datetime.fromisoformat(record["fire_at"])
+        except Exception:
+            return False
+        timer_id, did, action = record["id"], record["did"], record["action"]
+
+        async def job():
+            try:
+                # 调度延迟太久（>5分钟）说明错过了时机，直接丢弃不补执行
+                if datetime.now() - fire_at > timedelta(seconds=300):
+                    self.log.info(f"voice_timer 已过期，跳过执行 id={timer_id}")
+                    return
+                await self.run_voice_command(did, action, native=False)
+            finally:
+                # 一次性任务：执行后自删，避免 cron 表达式每年重复触发
+                self._remove_voice_timer(timer_id)
+
+        return self.crontab.add_once_job(record["expression"], job, timer_id)
+
+    def _voice_timers_path(self):
+        return os.path.join(self.config.conf_path, "voice_timers.json")
+
+    def _load_voice_timer_records(self):
+        try:
+            with open(self._voice_timers_path(), encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return []
+        except Exception:
+            self.log.exception("读取 voice_timers.json 失败")
+            return []
+
+    def _write_voice_timer_records(self, records):
+        try:
+            with open(self._voice_timers_path(), "w", encoding="utf-8") as f:
+                json.dump(records, f, ensure_ascii=False, indent=2)
+        except Exception:
+            self.log.exception("写入 voice_timers.json 失败")
+
+    def _save_voice_timer(self, record):
+        records = [
+            r for r in self._load_voice_timer_records() if r.get("id") != record["id"]
+        ]
+        records.append(record)
+        self._write_voice_timer_records(records)
+
+    def _remove_voice_timer(self, timer_id):
+        self.crontab.remove_job(timer_id)
+        self._write_voice_timer_records(
+            [r for r in self._load_voice_timer_records() if r.get("id") != timer_id]
+        )
+
+    def restore_voice_timers(self):
+        """重启或重载配置后，恢复未到期的一次性语音定时器。
+
+        过期超 5 分钟的直接丢弃（不补执行）。
+        """
+        records = self._load_voice_timer_records()
+        if not records:
+            return
+        now = datetime.now()
+        kept = []
+        for rec in records:
+            try:
+                fire_at = datetime.fromisoformat(rec["fire_at"])
+            except Exception:
+                continue
+            if now - fire_at > timedelta(seconds=300):
+                self.log.info(f"voice_timer 已过期，丢弃 id={rec.get('id')}")
+                continue
+            if self._register_voice_timer(rec):
+                kept.append(rec)
+        self._write_voice_timer_records(kept)
+        if kept:
+            self.log.info(f"restore_voice_timers 恢复 {len(kept)} 个未到期任务")
 
     # 重置计时器
     async def reset_timer_when_answer(self, answer_length, did):

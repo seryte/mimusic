@@ -88,6 +88,33 @@ class Crontab:
         except Exception as e:
             self.log.exception(f"Exception {e}")
 
+    def add_once_job(self, expression, job, job_id):
+        """添加一次性定时任务。
+
+        表达式本身是周期语义（如 "54 18 16 10 *" 每年都命中），调用方必须在
+        job 首次执行后调 remove_job 删除，否则会重复触发。
+        """
+        try:
+            trigger = CronTrigger.from_crontab(expression)
+            self.scheduler.add_job(
+                job,
+                trigger,
+                id=job_id,
+                coalesce=True,
+                max_instances=1,
+                misfire_grace_time=300,
+            )
+            return True
+        except Exception:
+            self.log.exception(f"add_once_job failed. expression:{expression} id:{job_id}")
+            return False
+
+    def remove_job(self, job_id):
+        try:
+            self.scheduler.remove_job(job_id)
+        except Exception:
+            pass
+
     # 添加关机任务
     def add_job_stop(self, expression, xiaomusic, did, **kwargs):
         async def job():
@@ -295,6 +322,12 @@ class Crontab:
                 self.log.info("crontab reload_config ok")
             except Exception as e:
                 self.log.exception(f"Execption {e}")
+
+        # 恢复重启/重载前未到期的一次性语音定时器
+        try:
+            xiaomusic.restore_voice_timers()
+        except Exception:
+            self.log.exception("restore_voice_timers failed")
 
         # 添加定时清理临时文件任务
         if xiaomusic.config.enable_auto_clean_temp:
