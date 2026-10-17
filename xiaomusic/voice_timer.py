@@ -94,7 +94,11 @@ def cron_expression_for(fire_at: datetime) -> str:
 # - "没有发现可以操作的电风扇，先去米家绑定设备吧。"（认出设备类型时用具体设备词）
 # 设备词会变（设备/电风扇/电视/灯…），但尾巴"先去米家绑定设备吧"稳定；
 # "没有发现可以操作"当前缀兜底——两者都是"办不了"语义，一起认
-NATIVE_TIMER_UNSUPPORTED_HINTS = ("没有发现可以操作", "先去米家绑定设备吧", "找不到设备")
+NATIVE_TIMER_UNSUPPORTED_HINTS = (
+    "没有发现可以操作",
+    "先去米家绑定设备吧",
+    "找不到设备",
+)
 
 
 def native_timer_failed(answer) -> bool:
