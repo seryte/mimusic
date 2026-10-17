@@ -1,5 +1,4 @@
 """语音定时器解析单测：python test/test_voice_timer.py 或 pytest test/test_voice_timer.py"""
-
 from datetime import datetime
 
 from xiaomusic.voice_timer import (
@@ -65,7 +64,8 @@ def test_cron_expression():
 
 
 def test_native_timer_failed():
-    # 只有原生明确说"找不到设备"才接管
+    # 只有原生明确说处理不了才接管（实测原话）
+    assert native_timer_failed("没有发现可以操作的设备，先去米家绑定设备吧。") is True
     assert native_timer_failed("找不到设备，请去米家先添加设备吧") is True
     # 原生能处理的（灯/电视等）：不接管，避免重复执行
     assert native_timer_failed("好的，已为你设置5分钟后关闭客厅灯") is False

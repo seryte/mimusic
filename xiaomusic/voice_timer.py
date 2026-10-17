@@ -28,12 +28,7 @@ _TIMER_PATTERNS = [
     (re.compile(rf"^{_NUM}\s*分钟后(.+)$"), 60, None, None),
     (re.compile(rf"^{_NUM}\s*小时后(.+)$"), 3600, None, None),
     (re.compile(r"^半\s*个?\s*小时后(.+)$"), None, 1800, "半小时"),
-    (
-        re.compile(r"^(?:一\s*个\s*半|1\s*个\s*半)\s*小时后(.+)$"),
-        None,
-        5400,
-        "一个半小时",
-    ),
+    (re.compile(r"^(?:一\s*个\s*半|1\s*个\s*半)\s*小时后(.+)$"), None, 5400, "一个半小时"),
 ]
 
 
@@ -89,7 +84,8 @@ def cron_expression_for(fire_at: datetime) -> str:
 
 
 # 小爱原生处理定时失败时的回复特征（保守匹配：只认这种明确表述）
-NATIVE_TIMER_UNSUPPORTED_HINTS = ("找不到设备",)
+# 实测原话："没有发现可以操作的设备，先去米家绑定设备吧。"
+NATIVE_TIMER_UNSUPPORTED_HINTS = ("没有发现可以操作的设备", "找不到设备")
 
 
 def native_timer_failed(answer) -> bool:
