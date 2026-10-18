@@ -73,6 +73,8 @@ def test_native_timer_failed():
     assert native_timer_failed("没有发现可以操作的空调，先去米家绑定设备吧。") is True
     # 即使前半句换说法，只要尾巴是"先去米家绑定设备吧"就接管
     assert native_timer_failed("抱歉，当前设备不支持定时，先去米家绑定设备吧。") is True
+    # 2026-10-18 用户实测原话②（"一分钟后关闭餐厅风扇"）：房间名/设备名可变
+    assert native_timer_failed("餐厅没有找到可控制的电风扇，去手机米家把它添加到房间里吧。") is True
     # 原生能处理的（灯/电视等）：不接管，避免重复执行
     assert native_timer_failed("好的，已为你设置5分钟后关闭客厅灯") is False
     assert native_timer_failed("好的") is False
